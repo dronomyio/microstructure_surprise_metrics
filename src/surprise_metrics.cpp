@@ -98,7 +98,8 @@ private:
     double garch_omega_ = 0.00001;
     double garch_alpha_ = 0.05;
     double garch_beta_ = 0.94;
-    double jump_threshold_ = 4.0;
+    //double jump_threshold_ = 4.0;
+    double jump_threshold_ = 4.6055; //ref README
     
     // Use regular vectors instead of aligned_vector to avoid allocation issues
     std::vector<float> price_buffer_;
@@ -178,8 +179,9 @@ private:
                 metric.standardized_return = 0;
             }
             
-            // Lee-Mykland statistic
-            float local_vol = std::sqrt(std::max(0.0f, bv[i] / window_size_));
+            // Lee-Mykland statistic -- Check README
+            // float local_vol = std::sqrt(std::max(0.0f, bv[i] / window_size_));
+            float local_vol = std::sqrt(std::max(0.0f, bv[i] ));
             if (local_vol > 0) {
                 metric.lee_mykland_stat = std::abs(return_buffer_[i]) / local_vol;
             } else {

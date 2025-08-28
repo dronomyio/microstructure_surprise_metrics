@@ -10,6 +10,148 @@ This normalizes returns by their predicted volatility. The intuition is simple: 
 
 These statistics identify price jumps that are too large to be explained by normal diffusive volatility. The core insight is that in high-frequency data, if you look at very short intervals, the continuous component of price movement becomes negligible while jumps remain prominent. 
 
+Check some videos
+a) https://www.youtube.com/watch?v=xc_X9GFVuVU
+
+b) ref: https://galton.uchicago.edu/~mykland/paperlinks/LeeMykland-2535.pdf
+
+## The Lee-Mykland Jump Detection Test Explained
+
+The paper addresses a critical problem: how do you detect "jumps" (sudden price movements from news/events) in high-frequency trading data without being fooled by normal volatility changes?
+
+### Core Concept Visualization
+
+```
+Normal Trading vs Jump Event:
+
+Normal:  ──╱╲─╱╲──╱╲───  (small fluctuations around trend)
+         
+Jump:    ────╱╲──│────   (sudden discontinuous move)
+                  │
+                  └── JUMP! (earnings, news, etc.)
+```
+
+### The Mathematical Framework
+
+**1. The Model:**
+```
+Price = Continuous Part + Jump Part
+dp(t) = μdt + σdW(t) + dJ(t)
+        ↑       ↑         ↑
+     drift  volatility  jumps
+```
+
+**2. The Test Statistic:**
+```
+L(i) = |return(i)| / local_volatility(i)
+
+where local_volatility uses Bipower Variation:
+BV = (π/2) × Σ|r(i)| × |r(i-1)|  ← robust to jumps!
+```
+
+### Why Bipower Variation?
+
+```
+Regular Variance:  Σr²  ← contaminated by jumps
+Bipower Variation: Σ|r(i)||r(i-1)| ← ignores jumps
+
+Example with jump at t=3:
+r = [0.01, -0.02, 0.15, 0.01, -0.01]  ← 0.15 is jump
+                    ↑
+Variance includes this²
+Bipower uses |0.02|×|0.15| and |0.15|×|0.01| ← diluted
+```
+
+### The Detection Process
+
+```
+Step 1: Calculate returns over small intervals (5-min)
+Step 2: Compute local volatility using K-period window
+Step 3: Standardize current return by local volatility
+Step 4: Compare to threshold adjusted for multiple testing
+
+      If L(i) > β* → JUMP DETECTED
+      
+      where β* ≈ -log(-log(1-α)) + Cn×Sn
+            Cn = (2log n)^0.5
+            Sn ≈ 1/Cn
+```
+
+### Your Implementation Issues
+
+Looking at your code in `src/surprise_metrics.cpp`:
+
+```cpp
+// Line 165-169 - YOUR CODE:
+float local_vol = std::sqrt(bv[i] / window_size);  // ← WRONG!
+```
+
+**The Problem:** You're dividing bipower variation by window_size, but BV is already a variance estimate. Should be:
+
+```cpp
+// CORRECTED:
+float local_vol = std::sqrt(bv[i]);  // No division needed
+```
+
+Also, your threshold calculation:
+```cpp
+// Line 172-175 - YOUR CODE:
+float Cn = std::sqrt(2.0 * std::log(return_buffer_.size()));
+float critical_value = jump_threshold_ + Cn * Sn;  // threshold=4.0
+```
+
+The paper recommends `β* ≈ 4.6055` for α=0.01. Your value of 4.0 is too low.
+
+### Visual Example of Your Problem
+
+```
+Your Current Detection:
+Returns: ──╱╲─╱╲──╱╲─╱╲─╱╲──
+           ↑  ↑  ↑  ↑  ↑
+         jump jump jump jump  ← 60% false positives!
+
+Correct Detection:
+Returns: ──╱╲─╱╲──╱╲─╱╲─╱╲──
+                    ↑
+                 real jump  ← 1-5% detection rate
+```
+
+### Fix Required
+
+In `src/surprise_metrics.cpp`, change:
+1. Line 165: Remove `/window_size` from local_vol calculation
+2. Line 174: Change `jump_threshold_` from 4.0 to 4.6055
+3. Verify bipower variation calculation in `simd_ops.cpp` is summing over the window
+
+This should reduce your jump detection from 60% to a more realistic 1-5%.
+
+./surprise_metrics_runner 
+SurpriseMetrics Runner v0.1.0
+=============================
+
+CUDA Devices Found: 4
+  Device 0: NVIDIA GeForce RTX 3070 (SM 8.6) Memory: 7958 MB
+  Device 1: NVIDIA GeForce RTX 3070 (SM 8.6) Memory: 7966 MB
+  Device 2: NVIDIA GeForce RTX 3070 (SM 8.6) Memory: 7966 MB
+  Device 3: NVIDIA GeForce RTX 3070 (SM 8.6) Memory: 7966 MB
+
+Initializing MetricsCalculator...
+Generating test data...
+Generated 1000 trades
+Processing trades...
+Extracted 1000 prices
+Using AVX2 optimized path
+Computed 999 returns
+Computed volatility
+Computed 899 metrics
+Processing completed in 0 ms
+
+Results Summary:
+  Total Metrics: 899
+  Jumps Detected: 8  with window false detection 540.
+  Max Z-Score: 1.59997
+
+
 The **Lee-Mykland statistic** specifically compares each return to a local volatility estimate from surrounding returns. When this ratio exceeds a threshold (derived from extreme value theory), it flags a jump. This helps separate genuine news-driven discontinuities from normal market noise.
 
 The **BNS (Barndorff-Nielsen & Shephard)** approach uses bipower variation to estimate continuous volatility robust to jumps, then identifies jumps as deviations from this baseline.
