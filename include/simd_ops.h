@@ -1,6 +1,10 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdlib>
+#include <vector>
+#include <new>
+#include <stdlib.h>
 
 namespace surprise_metrics {
 namespace simd {
@@ -25,14 +29,14 @@ public:
     
     T* allocate(size_type n) {
         void* ptr = nullptr;
-        if (posix_memalign(&ptr, Alignment, n * sizeof(T)) != 0) {
+        if (::posix_memalign(&ptr, Alignment, n * sizeof(T)) != 0) {
             throw std::bad_alloc();
         }
         return static_cast<T*>(ptr);
     }
     
     void deallocate(T* ptr, size_type) noexcept {
-        free(ptr);
+        ::free(ptr);
     }
 };
 

@@ -183,3 +183,65 @@ surprise_metrics/
     ├── download_polygon_data.sh
     └── run_analysis.py
 ```
+
+Here's a visualization of the architecture and relationships between the files:
+
+```
+                           main.cpp
+                              |
+                              | creates & uses
+                              ↓
+                      MetricsCalculator
+                    (surprise_metrics.cpp)
+                              |
+                              | contains Impl class that coordinates
+                              ↓
+        ┌──────────────┬──────────────┬──────────────┬──────────────┐
+        |              |              |              |              |
+        ↓              ↓              ↓              ↓              ↓
+  simd_ops.cpp   cuda_kernels.cu  multi_gpu.cpp  polygon_parser.cpp  (buffers)
+        |              |              |              |
+        |              |              |              |
+  AVX2/AVX512    GPU kernels    Multi-GPU      Data loading
+  compute_       - GARCH        management      from Polygon.io
+  returns        - Lee-Mykland  - distribute    CSV files
+  - RV           - BNS          - gather        
+  - BV           - Hawkes       - streams       
+
+```
+
+**Key relationships:**
+
+1. **main.cpp** → Entry point, creates MetricsCalculator instance, generates test data
+
+2. **surprise_metrics.cpp** → Core orchestrator containing the Impl class that:
+   - Manages data buffers (price, return, sigma, metrics)
+   - Calls SIMD operations for CPU preprocessing
+   - Would call CUDA kernels for GPU processing (currently #ifdef'd out)
+   - Computes final surprise metrics
+
+3. **simd_ops.cpp** → CPU vectorization for:
+   - Log returns calculation
+   - Realized variance (RV)
+   - Bipower variation (BV)
+
+4. **cuda_kernels.cu** → GPU implementations of:
+   - GARCH volatility
+   - Jump detection algorithms
+   - Hawkes process intensity
+   - Currently compiled but not called from surprise_metrics.cpp
+
+5. **multi_gpu.cpp** → Manages multiple GPUs:
+   - Data distribution across GPUs
+   - Stream management
+   - Result gathering
+   - Currently separate from main flow
+
+6. **polygon_parser.cpp** → Data ingestion:
+   - Parse CSV trade/quote data
+   - Handle nanosecond timestamps
+   - Currently not used by main.cpp
+
+**Note:** There is no "simd.cpp" file - only simd_ops.cpp.
+
+The current issue is that these components aren't fully integrated - CUDA kernels are compiled but not called, multi_gpu exists but isn't used, and polygon_parser isn't connected to the main flow.

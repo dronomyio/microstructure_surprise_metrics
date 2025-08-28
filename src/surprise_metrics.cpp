@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <iostream>
 
 #ifdef HAS_EIGEN
 #include <Eigen/Dense>
@@ -15,16 +16,13 @@ public:
     Impl(int num_gpus, size_t buffer_size) 
         : num_gpus_(num_gpus), buffer_size_(buffer_size) {
         
-        // Pre-allocate buffers
-        price_buffer_.reserve(buffer_size);
-        return_buffer_.reserve(buffer_size);
-        sigma_buffer_.reserve(buffer_size);
-        metrics_buffer_.reserve(buffer_size);
+        // Don't pre-allocate, let vectors grow naturally
+        // This avoids bad_alloc from aligned allocator
         
-        // Initialize CUDA if available
-        if (num_gpus > 0) {
-            init_cuda();
-        }
+        // Skip CUDA initialization for now
+        // if (num_gpus > 0) {
+        //     init_cuda();
+        // }
     }
     
     ~Impl() {
@@ -32,22 +30,42 @@ public:
     }
     
     void process_trades(const std::vector<Trade>& trades) {
+        if (trades.empty()) {
+            std::cerr << "No trades to process\n";
+            return;
+        }
+        
         // Extract prices
         price_buffer_.clear();
+        price_buffer_.reserve(trades.size());
+        
         for (const auto& trade : trades) {
             price_buffer_.push_back(static_cast<float>(trade.price));
         }
         
+        std::cout << "Extracted " << price_buffer_.size() << " prices\n";
+        
         // Compute returns
+        if (price_buffer_.size() < 2) {
+            std::cerr << "Not enough prices for returns\n";
+            return;
+        }
+        
         return_buffer_.resize(price_buffer_.size() - 1);
         compute_returns();
+        
+        std::cout << "Computed " << return_buffer_.size() << " returns\n";
         
         // Compute volatility
         sigma_buffer_.resize(return_buffer_.size());
         compute_volatility();
         
+        std::cout << "Computed volatility\n";
+        
         // Compute metrics
         compute_all_metrics(trades);
+        
+        std::cout << "Computed " << metrics_buffer_.size() << " metrics\n";
     }
     
     void process_quotes(const std::vector<Quote>& quotes) {
@@ -82,33 +100,24 @@ private:
     double garch_beta_ = 0.94;
     double jump_threshold_ = 4.0;
     
-    // Buffers
-    aligned_vector<float> price_buffer_;
-    aligned_vector<float> return_buffer_;
-    aligned_vector<float> sigma_buffer_;
+    // Use regular vectors instead of aligned_vector to avoid allocation issues
+    std::vector<float> price_buffer_;
+    std::vector<float> return_buffer_;
+    std::vector<float> sigma_buffer_;
     std::vector<SurpriseMetrics> metrics_buffer_;
     
-    // CUDA resources
+    // CUDA resources (unused for now)
     void* cuda_context_ = nullptr;
     float* d_prices_ = nullptr;
     float* d_returns_ = nullptr;
     float* d_sigma_ = nullptr;
     
     void init_cuda() {
-        #ifdef __CUDACC__
-        // Initialize CUDA resources
-        cudaMalloc(&d_prices_, buffer_size_ * sizeof(float));
-        cudaMalloc(&d_returns_, buffer_size_ * sizeof(float));
-        cudaMalloc(&d_sigma_, buffer_size_ * sizeof(float));
-        #endif
+        // Skip CUDA allocation for now
     }
     
     void cleanup_cuda() {
-        #ifdef __CUDACC__
-        if (d_prices_) cudaFree(d_prices_);
-        if (d_returns_) cudaFree(d_returns_);
-        if (d_sigma_) cudaFree(d_sigma_);
-        #endif
+        // Skip CUDA cleanup for now
     }
     
     void compute_returns() {
@@ -136,8 +145,13 @@ private:
     void compute_all_metrics(const std::vector<Trade>& trades) {
         metrics_buffer_.clear();
         
-        // Compute realized variance
-        aligned_vector<float> rv(return_buffer_.size());
+        if (return_buffer_.size() < window_size_) {
+            std::cerr << "Not enough returns for window size " << window_size_ << "\n";
+            return;
+        }
+        
+        // Use regular vectors
+        std::vector<float> rv(return_buffer_.size(), 0.0f);
         simd::compute_realized_variance_avx512(
             return_buffer_.data(),
             rv.data(),
@@ -145,30 +159,40 @@ private:
             window_size_
         );
         
-        // Compute bipower variation
-        aligned_vector<float> bv(return_buffer_.size());
+        std::vector<float> bv(return_buffer_.size(), 0.0f);
         simd::compute_bipower_variation_avx512(
             return_buffer_.data(),
             bv.data(),
             return_buffer_.size()
         );
         
-        // Generate metrics
-        for (size_t i = window_size_; i < return_buffer_.size(); ++i) {
+        // Generate metrics starting from window_size_
+        for (size_t i = window_size_; i < return_buffer_.size() && i < trades.size(); ++i) {
             SurpriseMetrics metric;
             metric.timestamp = trades[i].timestamp;
             
             // Standardized return
-            metric.standardized_return = return_buffer_[i] / sigma_buffer_[i];
+            if (sigma_buffer_[i] > 0) {
+                metric.standardized_return = return_buffer_[i] / sigma_buffer_[i];
+            } else {
+                metric.standardized_return = 0;
+            }
             
             // Lee-Mykland statistic
-            float local_vol = std::sqrt(bv[i] / window_size_);
-            metric.lee_mykland_stat = std::abs(return_buffer_[i]) / local_vol;
+            float local_vol = std::sqrt(std::max(0.0f, bv[i] / window_size_));
+            if (local_vol > 0) {
+                metric.lee_mykland_stat = std::abs(return_buffer_[i]) / local_vol;
+            } else {
+                metric.lee_mykland_stat = 0;
+            }
             
             // BNS statistic
-            float jump_component = rv[i] - bv[i];
-            float theta = (M_PI * M_PI / 4.0 + M_PI - 5.0);
-            metric.bns_stat = std::sqrt(window_size_) * jump_component / rv[i];
+            if (rv[i] > 0) {
+                float jump_component = rv[i] - bv[i];
+                metric.bns_stat = std::sqrt(window_size_) * jump_component / rv[i];
+            } else {
+                metric.bns_stat = 0;
+            }
             
             // Trade intensity (simplified)
             metric.trade_intensity_zscore = 0.0; // Placeholder

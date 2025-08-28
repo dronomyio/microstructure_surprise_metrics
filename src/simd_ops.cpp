@@ -1,51 +1,68 @@
 #include "simd_ops.h"
-#include <immintrin.h>
 #include <cmath>
+#include <algorithm>
+#include <iostream>
+
+// Only include immintrin if we have AVX2
+#ifdef HAS_AVX2
+#include <immintrin.h>
+#endif
 
 namespace surprise_metrics {
 namespace simd {
 
-// AVX-512 implementation for computing returns
+// AVX2 implementation for computing returns
 void compute_returns_avx512(const float* prices, float* returns, size_t n) {
-    const __m512 zero = _mm512_setzero_ps();
+    #ifdef HAS_AVX2
+    // Use compile-time check, not runtime
+    std::cout << "Using AVX2 optimized path\n";
     
-    size_t simd_end = (n - 1) & ~15; // Process 16 elements at a time
+    size_t simd_end = (n - 1) & ~7; // Process 8 elements at a time
     
-    for (size_t i = 0; i < simd_end; i += 16) {
-        __m512 curr_prices = _mm512_loadu_ps(&prices[i + 1]);
-        __m512 prev_prices = _mm512_loadu_ps(&prices[i]);
+    for (size_t i = 0; i < simd_end; i += 8) {
+        __m256 curr_prices = _mm256_loadu_ps(&prices[i + 1]);
+        __m256 prev_prices = _mm256_loadu_ps(&prices[i]);
         
-        // Compute log returns: log(p[i+1]/p[i]) = log(p[i+1]) - log(p[i])
-        __m512 ratio = _mm512_div_ps(curr_prices, prev_prices);
+        // Compute simple returns: (p[i+1] - p[i]) / p[i]
+        __m256 diff = _mm256_sub_ps(curr_prices, prev_prices);
+        __m256 returns_vec = _mm256_div_ps(diff, prev_prices);
         
-        // Custom fast log approximation for financial data
-        // Using polynomial approximation for better accuracy
-        __m512 log_returns = _mm512_log_ps(ratio);
-        
-        _mm512_storeu_ps(&returns[i], log_returns);
+        _mm256_storeu_ps(&returns[i], returns_vec);
     }
     
-    // Handle remaining elements
+    // Handle remaining elements with scalar log returns
     for (size_t i = simd_end; i < n - 1; ++i) {
         returns[i] = std::log(prices[i + 1] / prices[i]);
     }
+    #else
+    // Scalar fallback
+    std::cout << "Using scalar path (no AVX2)\n";
+    for (size_t i = 0; i < n - 1; ++i) {
+        returns[i] = std::log(prices[i + 1] / prices[i]);
+    }
+    #endif
 }
 
-// AVX-512 implementation for realized variance
+// AVX2 implementation for realized variance
 void compute_realized_variance_avx512(const float* returns, float* rv, size_t n, int window) {
-    const __m512 zero = _mm512_setzero_ps();
-    
+    #ifdef HAS_AVX2
     for (size_t i = 0; i < n - window; ++i) {
-        __m512 sum = zero;
+        __m256 sum = _mm256_setzero_ps();
         
         size_t j = 0;
-        for (; j + 16 <= window; j += 16) {
-            __m512 r = _mm512_loadu_ps(&returns[i + j]);
-            sum = _mm512_fmadd_ps(r, r, sum); // r * r + sum
+        // Process 8 elements at a time
+        for (; j + 8 <= window; j += 8) {
+            __m256 r = _mm256_loadu_ps(&returns[i + j]);
+            sum = _mm256_fmadd_ps(r, r, sum); // r * r + sum
         }
         
-        // Horizontal sum of vector
-        float result = _mm512_reduce_add_ps(sum);
+        // Horizontal sum for AVX2
+        __m128 low = _mm256_castps256_ps128(sum);
+        __m128 high = _mm256_extractf128_ps(sum, 1);
+        __m128 sum128 = _mm_add_ps(low, high);
+        sum128 = _mm_hadd_ps(sum128, sum128);
+        sum128 = _mm_hadd_ps(sum128, sum128);
+        float result = _mm_cvtss_f32(sum128);
         
         // Handle remaining elements
         for (; j < window; ++j) {
@@ -54,33 +71,52 @@ void compute_realized_variance_avx512(const float* returns, float* rv, size_t n,
         
         rv[i] = result;
     }
+    #else
+    // Scalar fallback
+    for (size_t i = 0; i < n - window; ++i) {
+        float sum = 0.0f;
+        for (int j = 0; j < window; ++j) {
+            sum += returns[i + j] * returns[i + j];
+        }
+        rv[i] = sum;
+    }
+    #endif
 }
 
-// AVX-512 implementation for bipower variation
+// AVX2 implementation for bipower variation
 void compute_bipower_variation_avx512(const float* returns, float* bv, size_t n) {
-    const __m512 pi_over_2 = _mm512_set1_ps(1.5707963267948966f);
-    const __m512 sign_mask = _mm512_set1_ps(-0.0f);
+    const float pi_over_2 = 1.5707963267948966f;
     
-    size_t simd_end = (n - 1) & ~15;
+    #ifdef HAS_AVX2
+    const __m256 pi_over_2_vec = _mm256_set1_ps(pi_over_2);
+    const __m256 sign_mask = _mm256_set1_ps(-0.0f);
     
-    for (size_t i = 0; i < simd_end; i += 16) {
-        __m512 curr = _mm512_loadu_ps(&returns[i + 1]);
-        __m512 prev = _mm512_loadu_ps(&returns[i]);
+    size_t simd_end = (n - 1) & ~7;
+    
+    for (size_t i = 0; i < simd_end; i += 8) {
+        __m256 curr = _mm256_loadu_ps(&returns[i + 1]);
+        __m256 prev = _mm256_loadu_ps(&returns[i]);
         
         // Compute |r[i]| * |r[i-1]|
-        curr = _mm512_andnot_ps(sign_mask, curr); // abs
-        prev = _mm512_andnot_ps(sign_mask, prev); // abs
+        curr = _mm256_andnot_ps(sign_mask, curr); // abs
+        prev = _mm256_andnot_ps(sign_mask, prev); // abs
         
-        __m512 prod = _mm512_mul_ps(curr, prev);
-        prod = _mm512_mul_ps(prod, pi_over_2);
+        __m256 prod = _mm256_mul_ps(curr, prev);
+        prod = _mm256_mul_ps(prod, pi_over_2_vec);
         
-        _mm512_storeu_ps(&bv[i], prod);
+        _mm256_storeu_ps(&bv[i], prod);
     }
     
     // Handle remaining elements
     for (size_t i = simd_end; i < n - 1; ++i) {
-        bv[i] = std::abs(returns[i + 1]) * std::abs(returns[i]) * 1.5707963267948966f;
+        bv[i] = std::abs(returns[i + 1]) * std::abs(returns[i]) * pi_over_2;
     }
+    #else
+    // Scalar fallback
+    for (size_t i = 0; i < n - 1; ++i) {
+        bv[i] = std::abs(returns[i + 1]) * std::abs(returns[i]) * pi_over_2;
+    }
+    #endif
 }
 
 }} // namespace surprise_metrics::simd

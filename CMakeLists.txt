@@ -17,18 +17,48 @@ find_package(Threads REQUIRED)
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
 
 # SIMD flags
+#include(CheckCXXCompilerFlag)
+#CHECK_CXX_COMPILER_FLAG("-mavx2" COMPILER_SUPPORTS_AVX2)
+#CHECK_CXX_COMPILER_FLAG("-mavx512f" COMPILER_SUPPORTS_AVX512)
+#
+##if(COMPILER_SUPPORTS_AVX512)
+##set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mavx512dq -mavx512cd -mavx512bw -mavx512vl")
+#elseif(COMPILER_SUPPORTS_AVX2)
+##set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mfma")
+#endif()
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fopenmp")
+
+######################################
+# SIMD flags - detect what the compiler supports
 include(CheckCXXCompilerFlag)
 CHECK_CXX_COMPILER_FLAG("-mavx2" COMPILER_SUPPORTS_AVX2)
 CHECK_CXX_COMPILER_FLAG("-mavx512f" COMPILER_SUPPORTS_AVX512)
 
-if(COMPILER_SUPPORTS_AVX512)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx512f -mavx512dq -mavx512cd -mavx512bw -mavx512vl")
-elseif(COMPILER_SUPPORTS_AVX2)
+# Enable AVX2 if supported (your CPU has it)
+if(COMPILER_SUPPORTS_AVX2)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mavx2 -mfma")
+    add_definitions(-DHAS_AVX2=1)
+    message(STATUS "AVX2 Support: ENABLED")
+else()
+    message(STATUS "AVX2 Support: DISABLED")
 endif()
 
+# Don't enable AVX512 since your CPU doesn't have it
+if(COMPILER_SUPPORTS_AVX512)
+    # Don't add AVX512 flags even if compiler supports it
+    # Your AMD CPU doesn't have AVX512
+    message(STATUS "AVX512 Support: Compiler supports but not enabling (AMD CPU)")
+endif()
+
+# Optimization flags - don't use -march=native to avoid CPU-specific issues
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fopenmp")
+
+######################################
+
+
 # Optimization flags
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -mtune=native -fopenmp")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -mtune=native -fopenmp")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -fopenmp")
 
 # CUDA architecture selection (support multiple architectures)
 if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
