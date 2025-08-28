@@ -129,6 +129,8 @@ This should reduce your jump detection from 60% to a more realistic 1-5%.
 SurpriseMetrics Runner v0.1.0
 =============================
 
+```
+
 CUDA Devices Found: 4
   Device 0: NVIDIA GeForce RTX 3070 (SM 8.6) Memory: 7958 MB
   Device 1: NVIDIA GeForce RTX 3070 (SM 8.6) Memory: 7966 MB
@@ -150,6 +152,7 @@ Results Summary:
   Total Metrics: 899
   Jumps Detected: 8  with window false detection 540.
   Max Z-Score: 1.59997
+```
 
 
 The **Lee-Mykland statistic** specifically compares each return to a local volatility estimate from surrounding returns. When this ratio exceeds a threshold (derived from extreme value theory), it flags a jump. This helps separate genuine news-driven discontinuities from normal market noise.
