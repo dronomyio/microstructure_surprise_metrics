@@ -2,7 +2,6 @@
 
 #include <cuda_runtime.h>
 #include <curand_kernel.h>
-#include <cub/cub.cuh>
 
 namespace surprise_metrics {
 namespace cuda {
@@ -63,20 +62,17 @@ __global__ void standardized_returns_kernel(
     const int n
 );
 
-// Multi-GPU management
-class MultiGPUContext {
-public:
-    MultiGPUContext(int num_gpus);
-    ~MultiGPUContext();
-    
-    void distribute_data(const float* host_data, size_t total_size);
-    void gather_results(float* host_results, size_t total_size);
-    
-private:
-    int num_gpus_;
-    std::vector<cudaStream_t> streams_;
-    std::vector<float*> device_buffers_;
-    std::vector<size_t> chunk_sizes_;
-};
+// Host functions for launching kernels
+void launch_garch_estimation(float* returns, float* sigma, int n, 
+                             float omega, float alpha, float beta,
+                             cudaStream_t stream = 0);
+
+void launch_jump_detection(float* returns, float* local_vol, 
+                           bool* jump_flags, int n, float threshold,
+                           cudaStream_t stream = 0);
+
+void launch_hawkes_intensity(float* timestamps, float* intensity, 
+                             int n, float mu, float phi, float kappa,
+                             cudaStream_t stream = 0);
 
 }} // namespace surprise_metrics::cuda

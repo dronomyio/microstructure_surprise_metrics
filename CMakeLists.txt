@@ -85,6 +85,7 @@ set(CUDA_SOURCES
 set(CPP_SOURCES
     src/surprise_metrics.cpp
     src/simd_ops.cpp
+    src/multi_gpu.cpp
 )
 
 # Add optional sources based on available libraries

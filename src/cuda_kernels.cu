@@ -1,8 +1,6 @@
 #include "cuda_kernels.cuh"
-#include <cooperative_groups.h>
-#include <cuda_fp16.h>
-
-namespace cg = cooperative_groups;
+#include <cstdio>
+#include <cmath>
 
 namespace surprise_metrics {
 namespace cuda {
@@ -79,7 +77,7 @@ __global__ void lee_mykland_kernel(
     }
 }
 
-// BNS kernel using CUB for reductions
+// BNS kernel
 __global__ void bns_kernel(
     const float* __restrict__ returns,
     float* __restrict__ rv,
@@ -89,10 +87,6 @@ __global__ void bns_kernel(
     const int n,
     const int window_size
 ) {
-    __shared__ float shared_rv[BLOCK_SIZE];
-    __shared__ float shared_bv[BLOCK_SIZE];
-    __shared__ float shared_tq[BLOCK_SIZE];
-    
     int tid = threadIdx.x;
     int gid = blockIdx.x * blockDim.x + tid;
     
@@ -183,58 +177,42 @@ __global__ void standardized_returns_kernel(
     }
 }
 
-// Multi-GPU context implementation
-MultiGPUContext::MultiGPUContext(int num_gpus) : num_gpus_(num_gpus) {
-    streams_.resize(num_gpus);
-    device_buffers_.resize(num_gpus);
-    chunk_sizes_.resize(num_gpus);
+// Host launcher functions
+void launch_garch_estimation(float* returns, float* sigma, int n, 
+                             float omega, float alpha, float beta,
+                             cudaStream_t stream) {
+    int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    size_t shared_mem_size = BLOCK_SIZE * sizeof(float);
     
-    for (int i = 0; i < num_gpus; i++) {
-        cudaSetDevice(i);
-        cudaStreamCreate(&streams_[i]);
-    }
+    garch_kernel<<<blocks, BLOCK_SIZE, shared_mem_size, stream>>>(
+        returns, sigma, n, omega, alpha, beta
+    );
 }
 
-MultiGPUContext::~MultiGPUContext() {
-    for (int i = 0; i < num_gpus_; i++) {
-        cudaSetDevice(i);
-        if (device_buffers_[i]) {
-            cudaFree(device_buffers_[i]);
-        }
-        cudaStreamDestroy(streams_[i]);
-    }
+void launch_jump_detection(float* returns, float* local_vol, 
+                           bool* jump_flags, int n, float threshold,
+                           cudaStream_t stream) {
+    int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    
+    // Allocate test_stats on device
+    float* test_stats;
+    cudaMalloc(&test_stats, n * sizeof(float));
+    
+    lee_mykland_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(
+        returns, local_vol, test_stats, jump_flags, n, 100, threshold
+    );
+    
+    cudaFree(test_stats);
 }
 
-void MultiGPUContext::distribute_data(const float* host_data, size_t total_size) {
-    size_t chunk_size = (total_size + num_gpus_ - 1) / num_gpus_;
+void launch_hawkes_intensity(float* timestamps, float* intensity, 
+                             int n, float mu, float phi, float kappa,
+                             cudaStream_t stream) {
+    int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     
-    for (int i = 0; i < num_gpus_; i++) {
-        cudaSetDevice(i);
-        size_t offset = i * chunk_size;
-        size_t actual_size = std::min(chunk_size, total_size - offset);
-        chunk_sizes_[i] = actual_size;
-        
-        cudaMalloc(&device_buffers_[i], actual_size * sizeof(float));
-        cudaMemcpyAsync(device_buffers_[i], host_data + offset, 
-                       actual_size * sizeof(float),
-                       cudaMemcpyHostToDevice, streams_[i]);
-    }
-}
-
-void MultiGPUContext::gather_results(float* host_results, size_t total_size) {
-    for (int i = 0; i < num_gpus_; i++) {
-        cudaSetDevice(i);
-        size_t offset = i * chunk_sizes_[i];
-        cudaMemcpyAsync(host_results + offset, device_buffers_[i],
-                       chunk_sizes_[i] * sizeof(float),
-                       cudaMemcpyDeviceToHost, streams_[i]);
-    }
-    
-    // Synchronize all devices
-    for (int i = 0; i < num_gpus_; i++) {
-        cudaSetDevice(i);
-        cudaStreamSynchronize(streams_[i]);
-    }
+    hawkes_intensity_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(
+        timestamps, intensity, n, mu, phi, kappa, 0.001f
+    );
 }
 
 }} // namespace surprise_metrics::cuda
