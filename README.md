@@ -153,3 +153,33 @@ Order p-values: $p_{(1)} \leq p_{(2)} \leq ... \leq p_{(m)}$
 Find largest $k$ such that: $p_{(k)} \leq \frac{k}{m} \cdot \alpha_{FDR}$
 
 This mathematical framework provides rigorous statistical testing for market surprises while controlling for multiple testing and maintaining specified false positive rates.
+
+## Project Structure
+```
+surprise_metrics/
+├── CMakeLists.txt
+├── Dockerfile
+├── docker-compose.yml
+├── requirements.txt
+├── setup.py
+├── include/
+│   ├── surprise_metrics.h
+│   ├── simd_ops.h
+│   ├── cuda_kernels.cuh
+│   └── polygon_parser.h
+├── src/
+│   ├── surprise_metrics.cpp
+│   ├── simd_ops.cpp
+│   ├── cuda_kernels.cu
+│   ├── polygon_parser.cpp
+│   └── main.cpp
+├── python/
+│   ├── __init__.py
+│   ├── api.py
+│   └── surprise_metrics.pyx
+├── tests/
+│   └── test_metrics.py
+└── scripts/
+    ├── download_polygon_data.sh
+    └── run_analysis.py
+```
