@@ -117,16 +117,21 @@ __global__ void bns_kernel(
         }
         
         local_bv *= pi_over_2 * window_size / (window_size - 1);
-        local_tq *= window_size * powf(mu_43, -3.0f) * window_size / (window_size - 2);
+        //local_tq *= window_size * powf(mu_43, -3.0f) * window_size / (window_size - 2);
+	//local_tq *= (window_size / (window_size - 2)) * powf(mu_43, -3.0f);
+	local_tq *= powf(mu_43, -3.0f) * window_size / (window_size - 2);
         
         // Store results
         rv[gid] = local_rv;
         bv[gid] = local_bv;
         tq[gid] = local_tq;
+	 
+	//ref https://public.econ.duke.edu/~get/browse/courses/883/Spr15/COURSE-MATERIALS/Z_Papers/BNSJFEC2006.pdf
+	//page 8 equ 11
         
         // Compute BNS test statistic
-        float jump_component = local_rv - local_bv;
-        float theta = (pi_over_2 * pi_over_2 / 4.0f + 3.14159f - 5.0f);
+        float jump_component = local_rv - local_bv; //RV - BV
+        float theta = (pi_over_2 * pi_over_2 / 4.0f + 3.14159f - 5.0f); //ϑ
         float denominator = sqrtf(theta * local_tq / (local_bv * local_bv));
         
         test_stats[gid] = sqrtf(float(window_size)) * (jump_component / local_rv) / denominator;

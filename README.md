@@ -159,6 +159,66 @@ The **Lee-Mykland statistic** specifically compares each return to a local volat
 
 The **BNS (Barndorff-Nielsen & Shephard)** approach uses bipower variation to estimate continuous volatility robust to jumps, then identifies jumps as deviations from this baseline.
 
+Ref: https://public.econ.duke.edu/~get/browse/courses/883/Spr15/COURSE-MATERIALS/Z_Papers/BNSJFEC2006.pdf
+
+Equation 11 on page 8
+```
+Ĥ = δ^(-1/2) × (μ₁^(-2){Yδ}ₜ^[1,1]/[Yδ]ₜ - 1) / √(ϑ{Yδ}ₜ^[1,1,1,1]/{Yδ}ₜ^[1,1]²)
+Where:
+
+{Yδ}ₜ^[1,1] is bipower variation (BV)
+[Yδ]ₜ is realized variance (RV)
+{Yδ}ₜ^[1,1,1,1] is quad-power quarticity (your tri-power quarticity)
+ϑ is defined on page 7 as π²/4 + π - 5 ≈ 0.609
+```
+Cuda code
+```
+float jump_component = local_rv - local_bv;  // RV - BV
+float theta = (pi_over_2 * pi_over_2 / 4.0f + 3.14159f - 5.0f);  // ϑ
+test_stats[gid] = sqrtf(window_size) * (jump_component / local_rv) / denominator;
+```
+Visualize:
+
+```
+The BNS Ratio Jump Test Statistic (Ĥ)
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+                      ┌──────────────────────────┐
+                      │  Bipower Variation (BV)  │
+                      │  ───────────────────────  │  - 1
+           √n    ×    │  Realized Variance (RV)  │
+    ────────────────────────────────────────────────────────────
+                               ____________
+                              ╱            
+                             ╱  ϑ × TQ/BV²
+                            ╱
+                           ╱
+                          ╱
+                        ╲╱
+
+    Breaking it down:
+
+    Numerator:  √n × (BV/RV - 1)
+                 ↑     ↑
+                 |     └── Ratio test: if BV < RV, there are jumps
+                 └── Scaling factor for convergence
+
+    Denominator: √(ϑ × Tri-Power Quarticity / BV²)
+                  ↑     ↑                      ↑
+                  |     |                      └── Normalization
+                  |     └── Higher order moment for variance
+                  └── Constant ≈ 0.609
+
+    Your CUDA implementation (algebraically equivalent):
+
+              √window_size × (RV - BV)/RV
+    ───────────────────────────────────────────────
+         √(0.609 × local_tq / local_bv²)
+
+    Note: (BV/RV - 1) = -(RV-BV)/RV
+
+```
+
 ## Abnormal Trade-Arrival Bursts
 
 This monitors the **intensity of trading activity** relative to recent patterns. The intuition is that informed traders or significant news events create clustering in trade arrivals - suddenly everyone wants to trade at once. By modeling the normal arrival rate (often as a Poisson or Hawkes process) and detecting deviations, you can identify periods of abnormal information flow or liquidity demand.
