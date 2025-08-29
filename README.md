@@ -392,7 +392,7 @@ surprise_metrics/
 Here's a visualization of the architecture and relationships between the files:
 
 ```
-                           main.cpp
+main.cpp
                               |
                               | creates & uses
                               ↓
@@ -405,15 +405,20 @@ Here's a visualization of the architecture and relationships between the files:
         |              |              |              |              |
         ↓              ↓              ↓              ↓              ↓
   simd_ops.cpp   cuda_kernels.cu  multi_gpu.cpp  polygon_parser.cpp  (buffers)
-        |              |              |              |
-        |              |              |              |
-  AVX2/AVX512    GPU kernels    Multi-GPU      Data loading
-  compute_       - GARCH        management      from Polygon.io
-  returns        - Lee-Mykland  - distribute    CSV files
-  - RV           - BNS          - gather        
-  - BV           - Hawkes       - streams       
+        |              |              |              |              |
+        |              |              |              |              |
+  AVX2/AVX512    GPU kernels    Multi-GPU      Data loading     price_buffer_
+  - compute_     - GARCH        - distribute    - CSV parse     return_buffer_
+    returns      - Lee-Mykland  - gather        - Gzip decode   sigma_buffer_
+  - RV           - BNS          - streams       - Nanosec ts    metrics_buffer_
+  - BV           - Hawkes(+BR,E)                               
+                 - Poisson                      
+                 - MLE estimation               
+                 - Burst detection              
 
+Legend: BR=Branching Ratio, E=Endogeneity
 ```
+
 
 **Key relationships:**
 

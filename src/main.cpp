@@ -34,7 +34,8 @@ int main(int argc, char* argv[]) {
     
     try {
         // Initialize calculator with NO GPUs for now to avoid CUDA allocation issues
-        MetricsCalculator calculator(0, 10000);  // 0 GPUs, smaller buffer
+        //MetricsCalculator calculator(0, 10000);  // 0 GPUs, smaller buffer
+        MetricsCalculator calculator(device_count, 10000);  // 4 GPUs, smaller buffer
         
         // Set parameters
         calculator.set_garch_params(0.00001, 0.05, 0.94);

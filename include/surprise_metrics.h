@@ -106,13 +106,13 @@ namespace simd {
 namespace cuda {
     void launch_garch_estimation(float* returns, float* sigma, int n, 
                                  float omega, float alpha, float beta,
-                                 cudaStream_t stream = 0);
+                                 cudaStream_t stream); //Remove = 0
     void launch_jump_detection(float* returns, float* local_vol, 
                                bool* jump_flags, int n, float threshold,
-                               cudaStream_t stream = 0);
+                               cudaStream_t stream); //Remove = 0
     void launch_hawkes_intensity(float* timestamps, float* intensity, 
                                  int n, float mu, float phi, float kappa,
-                                 cudaStream_t stream = 0);
+                                 cudaStream_t stream); //Remove = 0
 }
 
 } // namespace surprise_metrics
