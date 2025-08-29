@@ -1,10 +1,8 @@
 #pragma once
-
 #include <vector>
 #include <memory>
 #include <chrono>
 #include <cstdint>
-#include <cuda_runtime.h>
 
 namespace surprise_metrics {
 
@@ -53,8 +51,6 @@ struct Trade {
     char exchange;
     uint8_t conditions[4];
 };
-// Remove the packed attribute if you don't need tight memory packing:
-//} __attribute__((packed));
 
 struct Quote {
     timestamp_t timestamp;
@@ -65,8 +61,6 @@ struct Quote {
     char bid_exchange;
     char ask_exchange;
 };
-// Remove the packed attribute if you don't need tight memory packing:
-//} __attribute__((packed));
 
 struct SurpriseMetrics {
     float standardized_return;
@@ -81,7 +75,7 @@ class MetricsCalculator {
 public:
     MetricsCalculator(int num_gpus = 1, size_t buffer_size = 1000000);
     ~MetricsCalculator();
-
+    
     // Main processing functions
     void process_trades(const std::vector<Trade>& trades);
     void process_quotes(const std::vector<Quote>& quotes);
@@ -93,7 +87,7 @@ public:
     void set_garch_params(double omega, double alpha, double beta);
     void set_jump_threshold(double threshold);
     void set_window_size(int window);
-
+    
 private:
     class Impl;
     std::unique_ptr<Impl> pImpl;
@@ -104,19 +98,6 @@ namespace simd {
     void compute_returns_avx512(const float* prices, float* returns, size_t n);
     void compute_realized_variance_avx512(const float* returns, float* rv, size_t n, int window);
     void compute_bipower_variation_avx512(const float* returns, float* bv, size_t n);
-}
-
-// CUDA kernel declarations
-namespace cuda {
-    void launch_garch_estimation(float* returns, float* sigma, int n, 
-                                 float omega, float alpha, float beta,
-                                 cudaStream_t stream); //Remove = 0
-    void launch_jump_detection(float* returns, float* local_vol, 
-                               bool* jump_flags, int n, float threshold,
-                               cudaStream_t stream); //Remove = 0
-    void launch_hawkes_intensity(float* timestamps, float* intensity, 
-                                 int n, float mu, float phi, float kappa,
-                                 cudaStream_t stream); //Remove = 0
 }
 
 } // namespace surprise_metrics
