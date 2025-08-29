@@ -65,10 +65,9 @@ public:
         std::cout << "Computed " << return_buffer_.size() << " returns\n";
         
         // Process on GPU if available, otherwise CPU
-	// Process on GPU if available, otherwise CPU
 	std::cout << "Debug: num_gpus_=" << num_gpus_ << ", cuda_available_=" << cuda_available_ << std::endl;
-
         if (num_gpus_ > 0 && cuda_available_) {
+	    std::cout << "Using GPU processing" << std::endl;
             process_gpu(trades);
         } else {
 	    std::cout << "Using CPU processing (GPUs: " << num_gpus_ << ", CUDA available: " << cuda_available_ << ")" << std::endl;
@@ -193,15 +192,8 @@ private:
         size_t n_trades = trades.size();
         
         // Copy data to GPU
-        //cudaError_t err = cudaMemcpy(d_returns_, return_buffer_.data(), n_returns * sizeof(float), cudaMemcpyHostToDevice);
-        //if (err != cudaSuccess) throw std::runtime_error("Failed to copy returns to GPU");
-	cudaError_t err = cudaGetLastError();
-	if (err != cudaSuccess) {
-    		std::cerr << "Kernel failed: " << cudaGetErrorString(err) << std::endl;
-    	// Fall back to CPU processing
-    		process_cpu(trades);
-    		return;
-	}
+        cudaError_t err = cudaMemcpy(d_returns_, return_buffer_.data(), n_returns * sizeof(float), cudaMemcpyHostToDevice);
+        if (err != cudaSuccess) throw std::runtime_error("Failed to copy returns to GPU");
         
         err = cudaMemcpy(d_timestamps_, timestamp_buffer_.data(), n_trades * sizeof(float), cudaMemcpyHostToDevice);
         if (err != cudaSuccess) throw std::runtime_error("Failed to copy timestamps to GPU");
@@ -229,16 +221,14 @@ private:
             n_returns, window_size_, jump_threshold_
         );
 
-	// After lee_mykland kernel:
-	cudaError_t err = cudaGetLastError();
+	//cudaError_t err = cudaGetLastError();
 	if (err != cudaSuccess) {
-	    std::cerr << "Lee-Mykland kernel failed: " << cudaGetErrorString(err) << std::endl;
+    		std::cerr << "Kernel failed: " << cudaGetErrorString(err) << std::endl;
+    	// Fall back to CPU processing
+    		process_cpu(trades);
+    		return;
 	}
-
-	// Check memory copy results:
-	cudaMemcpy(d_lm_stats.data(), d_lm_stats, n_returns * sizeof(float), cudaMemcpyDeviceToHost);
-	std::cout << "First LM values: " << d_lm_stats[100] << ", " << d_lm_stats[200] << std::endl;
-		
+        
         // 4. Hawkes intensity with branching ratio
         cuda::launch_hawkes_computation(
             d_timestamps_, d_hawkes_intensity_, d_branching_ratio_, d_endogeneity_,
@@ -357,28 +347,34 @@ private:
             metric.lee_mykland_stat = std::abs(return_buffer_[i]) / (local_vol > 0 ? local_vol : 1.0f);
             
             // BNS statistic
-            //if (rv[i] > 0) {
-            //    rloat jump_component = rv[i] - bv[i];
-            //    metric.bns_stat = std::sqrt(window_size_) * jump_component / rv[i];
-            //} else {
-            //    metric.bns_stat = 0;
-            //}
-	    // Simplified correct version:
+            /*if (rv[i] > 0) {
+                float jump_component = rv[i] - bv[i];
+                metric.bns_stat = std::sqrt(window_size_) * jump_component / rv[i];
+            } else {
+                metric.bns_stat = 0;
+            }*/
+	    // Need to compute tri-power quarticity (TQ) for proper BNS
 	    if (rv[i] > 0 && bv[i] > 0) {
-	        float jump_component = std::max(0.0f, rv[i] - bv[i]);
-	    // Simplified BNS without TQ normalization
-	        metric.bns_stat = jump_component / std::sqrt(rv[i]);
+		    float jump_component = std::max(0.0f, rv[i] - bv[i]);
+		    // This needs TQ calculation - currently missing
+		    float theta = 0.609f;
+		    // Proper formula needs: sqrt(window) * (jump_component/RV) / sqrt(theta * TQ/BV^2)
+		    metric.bns_stat = std::sqrt(window_size_) * jump_component / rv[i]; // Incomplete formula
 	    } else {
-	        metric.bns_stat = 0;
+		    metric.bns_stat = 0;
 	    }
             
             // Jump detection
-            //float Cn = std::sqrt(2.0 * std::log(return_buffer_.size()));
-            //float Sn = 1.0f/Cn + (std::log(M_PI) + std::log(2.0 * std::log(return_buffer_.size()))) / (2.0f * Cn);
-            //float critical_value = jump_threshold_ + Cn * Sn;
-	    // Simplified correct approach:
-	    metric.jump_detected = (metric.lee_mykland_stat > jump_threshold_);
-            //metric.jump_detected = (metric.lee_mykland_stat > critical_value);
+            /*float Cn = std::sqrt(2.0 * std::log(return_buffer_.size()));
+            float Sn = 1.0f/Cn + (std::log(M_PI) + std::log(2.0 * std::log(return_buffer_.size()))) / (2.0f * Cn);
+            float critical_value = jump_threshold_ + Cn * Sn;
+	    */
+	    //float Cn = sqrtf(2.0f * logf(float(n)));
+	    float Cn = sqrtf(2.0f * logf(float(return_buffer_.size())));
+	    float beta_star = 0.49; // From Lee-Mykland paper
+	    float critical_value = beta_star * Cn;
+
+            metric.jump_detected = (metric.lee_mykland_stat > critical_value);
             
             // Trade intensity (placeholder for CPU version)
             metric.trade_intensity_zscore = 0.0f;

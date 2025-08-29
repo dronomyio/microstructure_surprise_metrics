@@ -1,54 +1,12 @@
-#include <cuda_runtime.h>
 #include <iostream>
 #include <vector>
 #include <chrono>
 #include <random>
 #include <cstring>
+#include <cuda_runtime.h>  // Add CUDA runtime header
 #include "surprise_metrics.h"
 
 using namespace surprise_metrics;
-
-std::vector<Trade> generate_test_trades_with_jumps() {
-    std::vector<Trade> trades;
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    
-    // Much smaller normal price movements - typical stock volatility
-    std::normal_distribution<> normal_return_dist(0.0, 0.001); // 0.1% daily vol
-    std::poisson_distribution<> size_dist(100);
-    
-    double current_price = 100.0;
-    auto start_time = std::chrono::steady_clock::now().time_since_epoch().count();
-    
-    // Generate realistic price series with actual detectable jumps
-    for (int i = 0; i < 1000; ++i) {
-        Trade trade;
-        trade.timestamp = std::chrono::nanoseconds(start_time + i * 1000000LL);
-        
-        // Add large jumps at specific intervals
-        double return_shock = 0.0;
-        if (i > 50 && (i % 100 == 23 || i % 137 == 7)) {
-            // Add significant jumps: 1-5% moves (much larger than normal 0.1% vol)
-            std::uniform_real_distribution<> jump_dist(-0.05, 0.05);
-            return_shock = jump_dist(gen);
-            std::cout << "Added jump at trade " << i << " with size " << return_shock << std::endl;
-        }
-        
-        // Normal small price movement plus any jump
-        double normal_return = normal_return_dist(gen);
-        double total_return = normal_return + return_shock;
-        
-        current_price *= (1.0 + total_return);
-        trade.price = current_price;
-        trade.size = size_dist(gen);
-        trade.exchange = 'N';
-        std::memset(trade.conditions, 0, sizeof(trade.conditions));
-        
-        trades.push_back(trade);
-    }
-    
-    return trades;
-}
 
 int main(int argc, char* argv[]) {
     std::cout << "SurpriseMetrics Runner v0.1.0\n";
@@ -76,17 +34,57 @@ int main(int argc, char* argv[]) {
     std::cout << "\nInitializing MetricsCalculator...\n";
     
     try {
-        // Use fewer GPUs or 0 to test CPU path first
-        //MetricsCalculator calculator(0, 10000);  // CPU-only for testing
-        MetricsCalculator calculator(device_count, 10000);  // GPU-only for testing
+        // Initialize calculator with NO GPUs for now to avoid CUDA allocation issues
+        //MetricsCalculator calculator(0, 10000);  // 0 GPUs, smaller buffer
+        MetricsCalculator calculator(device_count, 10000);  // 4 GPUs, smaller buffer
         
-        // Set more sensitive parameters for jump detection
+        // Set parameters - use more sensitive settings for testing
         calculator.set_garch_params(0.00001, 0.05, 0.94);
-        calculator.set_jump_threshold(3.0);  // Lower threshold
-        calculator.set_window_size(50);      // Smaller window
+        calculator.set_jump_threshold(3.0);  // Lower threshold for more sensitive detection
+        calculator.set_window_size(50);      // Smaller window for limited data
         
         std::cout << "Generating test data with artificial jumps...\n";
-        auto trades = generate_test_trades_with_jumps();
+        
+        // Generate test dataset with artificial jumps
+        std::vector<Trade> trades;
+        trades.reserve(1000);
+        
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::normal_distribution<> normal_dist(0.0, 0.01);  // Normal returns ~1%
+        std::uniform_real_distribution<> jump_prob(0.0, 1.0);
+        std::normal_distribution<> jump_size(-0.05, 0.05);  // Jump size ~5%
+        
+        auto start_time = std::chrono::steady_clock::now();
+        
+        double price = 100.0;  // Starting price
+        
+        for (int i = 0; i < 1000; ++i) {
+            Trade trade;
+            trade.timestamp = std::chrono::nanoseconds(
+                start_time.time_since_epoch().count() + i * 1000000
+            );
+            
+            // Generate return: normal + occasional jumps
+            double return_val = normal_dist(gen);
+            
+            // Add jumps with 2% probability
+            if (jump_prob(gen) < 0.02) {
+                double jump = jump_size(gen);
+                return_val += jump;
+                std::cout << "Added jump at trade " << i << " with size " << jump << std::endl;
+            }
+            
+            // Update price
+            price *= (1.0 + return_val);
+            trade.price = price;
+            
+            trade.size = 100;  // Fixed size for simplicity
+            trade.exchange = 'N';
+            std::memset(trade.conditions, 0, sizeof(trade.conditions));
+            trades.push_back(trade);
+        }
+        
         std::cout << "Generated " << trades.size() << " trades\n";
         
         // Process trades
@@ -103,7 +101,7 @@ int main(int argc, char* argv[]) {
         // Get metrics
         auto metrics = calculator.get_metrics();
         
-        // Detailed analysis
+        // Print detailed analysis
         int jump_count = 0;
         float max_zscore = 0.0f;
         float max_lm_stat = 0.0f;
@@ -111,11 +109,12 @@ int main(int argc, char* argv[]) {
         
         std::cout << "\nDetailed Analysis:\n";
         std::cout << "First 10 metrics:\n";
+        
         for (size_t i = 0; i < std::min(size_t(10), metrics.size()); ++i) {
             const auto& m = metrics[i];
             std::cout << "  [" << i << "] Return: " << m.standardized_return 
                       << ", LM: " << m.lee_mykland_stat 
-                      << ", BNS: " << m.bns_stat 
+                      << ", BNS: " << m.bns_stat
                       << ", Jump: " << (m.jump_detected ? "YES" : "NO") << "\n";
         }
         
@@ -123,7 +122,7 @@ int main(int argc, char* argv[]) {
             if (m.jump_detected) jump_count++;
             max_zscore = std::max(max_zscore, std::abs(m.standardized_return));
             max_lm_stat = std::max(max_lm_stat, m.lee_mykland_stat);
-            max_bns_stat = std::max(max_bns_stat, std::abs(m.bns_stat));
+            max_bns_stat = std::max(max_bns_stat, m.bns_stat);
         }
         
         std::cout << "\nResults Summary:\n";

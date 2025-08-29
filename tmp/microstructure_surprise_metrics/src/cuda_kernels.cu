@@ -22,12 +22,14 @@ __global__ void garch_kernel(
     int tid = threadIdx.x;
     int gid = blockIdx.x * blockDim.x + tid;
     
-    /*if (gid < n) {
+    if (gid < n) {
         shared_mem[tid] = returns[gid] * returns[gid];
+    } else {
+        shared_mem[tid] = 0.0f;
     }
     __syncthreads();
     
-    if (gid == 0) {
+    /*if (gid == 0) {
         sigma_squared[0] = omega / (1.0f - alpha - beta);
     }
     __syncthreads();
@@ -37,19 +39,10 @@ __global__ void garch_kernel(
         float curr_sigma2 = omega + alpha * shared_mem[tid-1] + beta * prev_sigma2;
         sigma_squared[gid] = curr_sigma2;
     }*/
-    extern __shared__ float shared_returns[];
-    // Load returns into shared memory with bounds checking
-    if (gid < n) {
-        shared_returns[tid] = returns[gid] * returns[gid];
-    } else {
-        shared_returns[tid] = 0.0f;
-    }
-    __syncthreads();
-    
     // Only thread 0 in block 0 computes GARCH sequence
     if (threadIdx.x == 0 && blockIdx.x == 0) {
         sigma_squared[0] = omega / (1.0f - alpha - beta);
-        
+
         for (int i = 1; i < n; i++) {
             // Load from global memory since shared memory has limited scope
             float r_squared = returns[i-1] * returns[i-1];
@@ -59,8 +52,7 @@ __global__ void garch_kernel(
 }
 
 // Lee-Mykland kernel with corrected bipower variation
-// not working this impl
-/*__global__ void lee_mykland_kernel(
+__global__ void lee_mykland_kernel(
     const float* __restrict__ returns,
     float* __restrict__ local_vol,
     float* __restrict__ test_stats,
@@ -78,7 +70,9 @@ __global__ void garch_kernel(
         // Fix: Ensure we don't access returns[i-1] when i=0
         int start_idx = (gid - window_size + 1 > 1) ? (gid - window_size + 1) : 1;
         for (int i = start_idx; i < gid; i++) {
-            bv += fabsf(returns[i]) * fabsf(returns[i-1]);
+            if (i > 0 && i < n) { //ensure i-1 is valid
+                bv += fabsf(returns[i]) * fabsf(returns[i-1]);
+	    }
         }
         
         // Adjust denominator for the actual number of terms used
@@ -113,60 +107,9 @@ __global__ void garch_kernel(
         }
     }
 }
-*/
-// Fixed Lee-Mykland kernel
-__global__ void lee_mykland_kernel(
-    const float* __restrict__ returns,
-    float* __restrict__ local_vol,
-    float* __restrict__ test_stats,
-    //bool* __restrict__ jump_flags,
-    char* __restrict__ jump_flags,
-    const int n,
-    const int window_size,
-    const float threshold
-) {
-    int gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (gid >= window_size && gid < n) {
-        float bv = 0.0f;
-        const float pi_over_2 = 1.5707963267948966f;
-
-        // Fixed bounds checking
-        //for (int i = gid - window_size + 1; i <= gid - 1; i++) {
-        for (int i = gid - window_size + 1; i < gid ; i++) {
-            if (i > 0 && i < n) {  // Ensure we don't access negative indices
-                bv += fabsf(returns[i]) * fabsf(returns[i-1]);
-            }
-        }
-
-        if (window_size > 1) {
-            bv *= pi_over_2 / (window_size - 1);
-        }
-
-        local_vol[gid] = sqrtf(fmaxf(bv, 1e-8f));  // Prevent zero division
-
-        float L = fabsf(returns[gid]) / local_vol[gid];
-        test_stats[gid] = L;
-
-        float Cn = sqrtf(2.0f * logf(float(n)));
-        float Sn = 1.0f/Cn + (logf(3.14159f) + logf(2.0f * logf(float(n)))) / (2.0f * Cn);
-        float critical_value = threshold + Cn * Sn;
-
-        //jump_flags[gid] = (L > critical_value); //not bool
-	jump_flags[gid] = (L > critical_value) ? 1 : 0;  // Convert boolean to char (0 or 1)
-    } else {
-        // Initialize output for invalid indices
-        if (gid < n) {
-            local_vol[gid] = 0.0f;
-            test_stats[gid] = 0.0f;
-            jump_flags[gid] = false;
-        }
-    }
-}
 
 // Corrected BNS kernel - fixed tri-power quarticity scaling
-//impl not working
-/*__global__ void bns_kernel(
+__global__ void bns_kernel(
     const float* __restrict__ returns,
     float* __restrict__ rv,
     float* __restrict__ bv,
@@ -220,83 +163,6 @@ __global__ void lee_mykland_kernel(
                 test_stats[gid] = 0.0f;
             }
         } else {
-            test_stats[gid] = 0.0f;
-        }
-    }
-}
-*/
-// Fixed BNS kernel
-__global__ void bns_kernel(
-    const float* __restrict__ returns,
-    float* __restrict__ rv,
-    float* __restrict__ bv,
-    float* __restrict__ tq,
-    float* __restrict__ test_stats,
-    const int n,
-    const int window_size
-) {
-    int gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (gid <= n - window_size) {
-        float local_rv = 0.0f;
-        float local_bv = 0.0f;
-        float local_tq = 0.0f;
-
-        const float pi_over_2 = 1.5707963267948966f;
-        const float mu_43 = 1.67f;
-
-        for (int i = 0; i < window_size; i++) {
-            int idx = gid + i;
-            if (idx < n) {
-                float r = returns[idx];
-                local_rv += r * r;
-
-                // Fixed bipower variation - use consecutive returns
-                if (i > 0) {
-                    local_bv += fabsf(returns[idx]) * fabsf(returns[idx-1]);
-                }
-
-                // Fixed tri-power quarticity with bounds checking
-                if (i > 1 && idx >= 2 && idx < n) {
-                    float r1 = powf(fabsf(returns[idx]), 4.0f/3.0f);
-                    float r2 = powf(fabsf(returns[idx-1]), 4.0f/3.0f);
-                    float r3 = powf(fabsf(returns[idx-2]), 4.0f/3.0f);
-                    local_tq += r1 * r2 * r3;
-                }
-            }
-        }
-
-        if (window_size > 1) {
-            local_bv *= pi_over_2 / (window_size - 1);
-        }
-        if (window_size > 2) {
-            local_tq *= powf(mu_43, -3.0f) / (window_size - 2);
-        }
-
-        rv[gid] = local_rv;
-        bv[gid] = local_bv;
-        tq[gid] = local_tq;
-
-        // Compute BNS test statistic with better numerical stability
-        if (local_rv > 1e-8f && local_bv > 1e-8f && local_tq > 1e-8f) {
-            float jump_component = fmaxf(0.0f, local_rv - local_bv);
-            float theta = 0.609f;
-            float denominator = sqrtf(theta * local_tq / (local_bv * local_bv));
-
-            if (denominator > 1e-8f) {
-                test_stats[gid] = sqrtf(float(window_size)) * (jump_component / local_rv) / denominator;
-            } else {
-                test_stats[gid] = 0.0f;
-            }
-        } else {
-            test_stats[gid] = 0.0f;
-        }
-    } else {
-        // Initialize output for invalid indices
-        if (gid < n) {
-            rv[gid] = 0.0f;
-            bv[gid] = 0.0f;
-            tq[gid] = 0.0f;
             test_stats[gid] = 0.0f;
         }
     }
@@ -431,10 +297,14 @@ __global__ void standardized_returns_kernel(
 void launch_garch_estimation(float* returns, float* sigma, int n, 
                              float omega, float alpha, float beta,
                              cudaStream_t stream) {
-    int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    /*int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     size_t shared_mem_size = BLOCK_SIZE * sizeof(float);
     
     garch_kernel<<<blocks, BLOCK_SIZE, shared_mem_size, stream>>>(
+        returns, sigma, n, omega, alpha, beta
+    );*/
+    // Only use 1 thread for sequential GARCH computation
+    garch_kernel<<<1, 1, 0, stream>>>(
         returns, sigma, n, omega, alpha, beta
     );
 }
@@ -521,4 +391,3 @@ void launch_standardized_returns(float* returns, float* sigma, float* z_scores, 
 }
 
 }} // namespace surprise_metrics::cuda
-
