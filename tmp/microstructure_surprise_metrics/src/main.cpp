@@ -77,7 +77,8 @@ int main(int argc, char* argv[]) {
     
     try {
         // Use fewer GPUs or 0 to test CPU path first
-        MetricsCalculator calculator(0, 10000);  // CPU-only for testing
+        //MetricsCalculator calculator(0, 10000);  // CPU-only for testing
+        MetricsCalculator calculator(device_count, 10000);  // GPU testing
         
         // Set more sensitive parameters for jump detection
         calculator.set_garch_params(0.00001, 0.05, 0.94);

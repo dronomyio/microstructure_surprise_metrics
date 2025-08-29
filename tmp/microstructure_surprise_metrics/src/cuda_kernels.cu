@@ -22,7 +22,7 @@ __global__ void garch_kernel(
     int tid = threadIdx.x;
     int gid = blockIdx.x * blockDim.x + tid;
     
-    if (gid < n) {
+    /*if (gid < n) {
         shared_mem[tid] = returns[gid] * returns[gid];
     }
     __syncthreads();
@@ -36,6 +36,25 @@ __global__ void garch_kernel(
         float prev_sigma2 = (gid > 1) ? sigma_squared[gid-1] : sigma_squared[0];
         float curr_sigma2 = omega + alpha * shared_mem[tid-1] + beta * prev_sigma2;
         sigma_squared[gid] = curr_sigma2;
+    }*/
+    extern __shared__ float shared_returns[];
+    // Load returns into shared memory with bounds checking
+    if (gid < n) {
+        shared_returns[tid] = returns[gid] * returns[gid];
+    } else {
+        shared_returns[tid] = 0.0f;
+    }
+    __syncthreads();
+    
+    // Only thread 0 in block 0 computes GARCH sequence
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        sigma_squared[0] = omega / (1.0f - alpha - beta);
+        
+        for (int i = 1; i < n; i++) {
+            // Load from global memory since shared memory has limited scope
+            float r_squared = returns[i-1] * returns[i-1];
+            sigma_squared[i] = omega + alpha * r_squared + beta * sigma_squared[i-1];
+        }
     }
 }
 
@@ -113,8 +132,9 @@ __global__ void lee_mykland_kernel(
         const float pi_over_2 = 1.5707963267948966f;
 
         // Fixed bounds checking
-        for (int i = gid - window_size + 1; i <= gid - 1; i++) {
-            if (i > 0) {  // Ensure we don't access negative indices
+        //for (int i = gid - window_size + 1; i <= gid - 1; i++) {
+        for (int i = gid - window_size + 1; i < gid ; i++) {
+            if (i > 0 && i < n) {  // Ensure we don't access negative indices
                 bv += fabsf(returns[i]) * fabsf(returns[i-1]);
             }
         }
@@ -237,7 +257,7 @@ __global__ void bns_kernel(
                 }
 
                 // Fixed tri-power quarticity with bounds checking
-                if (i > 1 && idx >= 2) {
+                if (i > 1 && idx >= 2 && idx < n) {
                     float r1 = powf(fabsf(returns[idx]), 4.0f/3.0f);
                     float r2 = powf(fabsf(returns[idx-1]), 4.0f/3.0f);
                     float r3 = powf(fabsf(returns[idx-2]), 4.0f/3.0f);
