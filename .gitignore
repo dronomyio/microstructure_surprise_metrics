@@ -1,5 +1,6 @@
 # Build files
 build/
+tmp/
 *.o
 *.a
 *.so

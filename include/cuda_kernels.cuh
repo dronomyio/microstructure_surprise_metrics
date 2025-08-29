@@ -28,7 +28,7 @@ __global__ void lee_mykland_kernel(
     const float* __restrict__ returns,
     float* __restrict__ local_vol,
     float* __restrict__ test_stats,
-    bool* __restrict__ jump_flags,
+    char* __restrict__ jump_flags,  // Changed bool* to char*
     const int n,
     const int window_size,
     const float threshold
@@ -73,7 +73,7 @@ __global__ void burst_detection_kernel(
     const float* __restrict__ hawkes_intensity,
     const float* __restrict__ poisson_surprise,
     const float* __restrict__ branching_ratio,
-    bool* __restrict__ burst_flags,
+    char* __restrict__ burst_flags,  // Changed bool* to char*
     float* __restrict__ burst_scores,
     const int n,
     const float hawkes_threshold,
@@ -100,7 +100,7 @@ void launch_garch_estimation(
 
 void launch_jump_detection(
     float* returns, float* local_vol, 
-    bool* jump_flags, int n, float threshold,
+    char* jump_flags, int n, float threshold,  // Changed bool* to char*
     cudaStream_t stream = 0
 );
 
@@ -112,7 +112,7 @@ void launch_bns_computation(
 
 void launch_lee_mykland_computation(
     float* returns, float* local_vol, float* test_stats,
-    bool* jump_flags, int n, int window, float threshold,
+    char* jump_flags, int n, int window, float threshold,  // Changed bool* to char*
     cudaStream_t stream = 0
 );
 
@@ -130,7 +130,7 @@ void launch_poisson_computation(
 
 void launch_burst_computation(
     float* hawkes_int, float* poisson_surp, float* branching,
-    bool* flags, float* scores, int n, float h_thresh,
+    char* flags, float* scores, int n, float h_thresh,  // Changed bool* to char*
     float p_thresh, float c_thresh, 
     cudaStream_t stream = 0
 );

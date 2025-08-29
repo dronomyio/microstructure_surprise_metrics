@@ -24,10 +24,12 @@ __global__ void garch_kernel(
     
     if (gid < n) {
         shared_mem[tid] = returns[gid] * returns[gid];
+    } else {
+        shared_mem[tid] = 0.0f;
     }
     __syncthreads();
     
-    if (gid == 0) {
+    /*if (gid == 0) {
         sigma_squared[0] = omega / (1.0f - alpha - beta);
     }
     __syncthreads();
@@ -36,40 +38,166 @@ __global__ void garch_kernel(
         float prev_sigma2 = (gid > 1) ? sigma_squared[gid-1] : sigma_squared[0];
         float curr_sigma2 = omega + alpha * shared_mem[tid-1] + beta * prev_sigma2;
         sigma_squared[gid] = curr_sigma2;
+    }*/
+    // Only thread 0 in block 0 computes GARCH sequence
+    if (threadIdx.x == 0 && blockIdx.x == 0) {
+        sigma_squared[0] = omega / (1.0f - alpha - beta);
+
+        for (int i = 1; i < n; i++) {
+            // Load from global memory since shared memory has limited scope
+            float r_squared = returns[i-1] * returns[i-1];
+            sigma_squared[i] = omega + alpha * r_squared + beta * sigma_squared[i-1];
+        }
     }
 }
 
-// Lee-Mykland kernel with corrected bipower variation
+// CORRECTED Lee-Mykland kernel - based on Barndorff-Nielsen & Shephard (2004)
 __global__ void lee_mykland_kernel(
     const float* __restrict__ returns,
     float* __restrict__ local_vol,
     float* __restrict__ test_stats,
-    bool* __restrict__ jump_flags,
+    char* __restrict__ jump_flags,
+    const int n,
+    const int window_size,
+    const float threshold
+) {
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (gid >= window_size && gid < n) {
+        // Step 1: Compute REALIZED VARIANCE (RV) over the window
+        float rv = 0.0f;
+        for (int i = gid - window_size + 1; i <= gid; i++) {
+            if (i >= 0 && i < n) {
+                rv += returns[i] * returns[i];
+            }
+        }
+
+        // Step 2: Compute BIPOWER VARIATION (BV) over the window
+        // BV = (π/2) × Σ|r_{i}| × |r_{i-1}| for overlapping pairs
+        float bv = 0.0f;
+        int bv_count = 0;
+
+        // Key fix: Only sum over pairs where BOTH returns exist
+        for (int i = gid - window_size + 2; i <= gid; i++) {
+            if (i > 0 && i < n) {  // Ensure both i and i-1 are valid
+                bv += fabsf(returns[i]) * fabsf(returns[i-1]);
+                bv_count++;
+            }
+        }
+
+        // Apply the π/2 scaling factor - this is the KEY mathematical correction
+        if (bv_count > 0) {
+            bv = (M_PI / 2.0f) * bv;  // NO division by count here!
+        }
+
+        // Step 3: Local volatility estimate
+        // Use max(BV, small_value) to avoid numerical issues
+        float sigma_est = sqrtf(fmaxf(bv, rv * 1e-4f));  // Fallback to 1% of RV
+        local_vol[gid] = sigma_est;
+
+        // Step 4: Test statistic L = |r_t| / σ_t
+        test_stats[gid] = (sigma_est > 0) ? fabsf(returns[gid]) / sigma_est : 0.0f;
+
+        // Step 5: Critical value - simplified version first
+        // Use fixed threshold instead of complex formula for debugging
+        float critical_value = threshold;  // Start simple: threshold = 4.6
+
+        jump_flags[gid] = (test_stats[gid] > critical_value) ? 1 : 0;
+
+        // Debug output for validation
+        if (gid == window_size || gid == window_size + 10) { // Only a few debug prints
+            printf("DEBUG gid=%d: rv=%.6f, bv=%.6f, sigma=%.6f, L=%.6f, jump=%d\n",
+                   gid, rv, bv, sigma_est, test_stats[gid], jump_flags[gid]);
+        }
+    } else {
+        // Initialize boundary conditions
+        if (gid < n) {
+            local_vol[gid] = 0.0f;
+            test_stats[gid] = 0.0f;
+            jump_flags[gid] = 0;
+        }
+    }
+}
+
+// Lee-Mykland kernel with corrected bipower variation
+__global__ void lee_mykland_kernel1 (
+    const float* __restrict__ returns,
+    float* __restrict__ local_vol,
+    float* __restrict__ test_stats,
+    char* __restrict__ jump_flags,  // Changed bool* to char*
     const int n,
     const int window_size,
     const float threshold
 ) {
     int gid = blockIdx.x * blockDim.x + threadIdx.x;
     
-    if (gid >= window_size && gid < n) {
+    if (gid >= window_size && gid < n - 1) { //Ensure we don't access out of bounds
         float bv = 0.0f;
+	int valid_pairs = 0;
         const float pi_over_2 = 1.5707963267948966f;
         
-        for (int i = gid - window_size + 1; i < gid; i++) {
-            bv += fabsf(returns[i]) * fabsf(returns[i-1]);
+        // Fix: Ensure we don't access returns[i-1] when i=0
+        //int start_idx = (gid - window_size + 2 > 1) ? (gid - window_size + 1) : 1;
+        //for (int i = start_idx; i < gid; i++) {
+	// Compute bipower variation correctly
+        for (int i = gid - window_size + 2; i <= gid; i++) { // Start from i-1 and i available
+            if (i > 0 && i < n) { //ensure i-1 is valid
+               bv += fabsf(returns[i]) * fabsf(returns[i-1]);
+	       valid_pairs++;
+	    }
         }
-        bv *= pi_over_2 / (window_size - 1);
+
+	// Correct bipower variation scaling: BV = (π/2) * Σ|r_i||r_{i-1}|
+        if (valid_pairs > 0) {
+            bv = (M_PI / 2.0f) * bv / valid_pairs;
+        } else {
+            bv = 1e-8f; // Small positive value to avoid division by zero
+        }
         
-        local_vol[gid] = sqrtf(bv);
+        /*// Adjust denominator for the actual number of terms used
+        int actual_terms = gid - start_idx;
+        if (actual_terms > 0) {
+            bv *= pi_over_2 / actual_terms;
+        } else {
+            bv = 0.01f;  // Small default value to avoid division by zero
+        }*/
         
-        float L = fabsf(returns[gid]) / local_vol[gid];
+        //local_vol[gid] = sqrtf(bv);
+        local_vol[gid] = sqrtf(fmaxf(bv, 1e-8f));
+
+	// Lee-Mykland test statistic: L = |r_t| / σ_t
+        if (local_vol[gid] > 0) {
+            test_stats[gid] = fabsf(returns[gid]) / local_vol[gid];
+        } else {
+            test_stats[gid] = 0.0f;
+        }
+        
+        /*// Avoid division by zero
+        float L = (local_vol[gid] > 0.0f) ? fabsf(returns[gid]) / local_vol[gid] : 0.0f;
         test_stats[gid] = L;
         
-        float Cn = sqrtf(2.0f * logf(float(n)));
-        float Sn = 1.0f/Cn + (logf(3.14159f) + logf(2.0f * logf(float(n)))) / (2.0f * Cn);
+        // Debug output for first few threads
+        if (gid < 5) {
+            printf("Thread %d: return=%.6f, local_vol=%.6f, L=%.6f, threshold=%.2f\n", 
+                   gid, returns[gid], local_vol[gid], L, threshold);
+        }
+        
+        // Lee-Mykland critical value calculation
+        // The threshold parameter is the critical value directly
+        float critical_value = threshold;
+	*/
+	// Critical value calculation (corrected formula)
+        float log_n = logf(float(n));
+        float Cn = sqrtf(2.0f * log_n);
+        float Sn = (1.0f / Cn) + (logf(M_PI) + logf(log_n)) / (2.0f * Cn);
         float critical_value = threshold + Cn * Sn;
         
-        jump_flags[gid] = (L > critical_value);
+        jump_flags[gid] = (test_stats[gid] > critical_value) ? 1 : 0;  // Convert boolean to char (0 or 1)
+        
+        // Debug output for jumps detected
+        if (test_stats[gid] > critical_value && gid < 100) {
+            printf("JUMP DETECTED at thread %d: L=%.6f > threshold=%.2f\n", gid,  critical_value);
+        }
     }
 }
 
@@ -216,7 +344,7 @@ __global__ void burst_detection_kernel(
     const float* __restrict__ hawkes_intensity,
     const float* __restrict__ poisson_surprise,
     const float* __restrict__ branching_ratio,
-    bool* __restrict__ burst_flags,
+    char* __restrict__ burst_flags,  // Changed bool* to char*
     float* __restrict__ burst_scores,
     const int n,
     const float hawkes_threshold,
@@ -232,9 +360,9 @@ __global__ void burst_detection_kernel(
         float composite = 0.6f * hawkes_score + 0.4f * poisson_score;
         burst_scores[gid] = composite;
         
-        burst_flags[gid] = (branching_ratio[gid] > hawkes_threshold) ||
+        burst_flags[gid] = ((branching_ratio[gid] > hawkes_threshold) ||
                            (fabsf(poisson_surprise[gid]) > poisson_threshold) ||
-                           (composite > composite_threshold);
+                           (composite > composite_threshold)) ? 1 : 0;  // Convert boolean to char (0 or 1)
     }
 }
 
@@ -262,16 +390,20 @@ __global__ void standardized_returns_kernel(
 void launch_garch_estimation(float* returns, float* sigma, int n, 
                              float omega, float alpha, float beta,
                              cudaStream_t stream) {
-    int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    /*int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     size_t shared_mem_size = BLOCK_SIZE * sizeof(float);
     
     garch_kernel<<<blocks, BLOCK_SIZE, shared_mem_size, stream>>>(
+        returns, sigma, n, omega, alpha, beta
+    );*/
+    // Only use 1 thread for sequential GARCH computation
+    garch_kernel<<<1, 1, 0, stream>>>(
         returns, sigma, n, omega, alpha, beta
     );
 }
 
 void launch_jump_detection(float* returns, float* local_vol, 
-                           bool* jump_flags, int n, float threshold,
+                           char* jump_flags, int n, float threshold,  // Changed bool* to char*
                            cudaStream_t stream) {
     int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     
@@ -295,12 +427,24 @@ void launch_bns_computation(float* returns, float* rv, float* bv, float* tq,
 }
 
 void launch_lee_mykland_computation(float* returns, float* local_vol, float* test_stats,
-                                    bool* jump_flags, int n, int window, float threshold,
+                                    char* jump_flags, int n, int window, float threshold,  // Changed bool* to char*
                                     cudaStream_t stream) {
     int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     lee_mykland_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(
         returns, local_vol, test_stats, jump_flags, n, window, threshold
     );
+    
+    // Check for kernel launch errors
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("Lee-Mykland kernel launch failed: %s\n", cudaGetErrorString(err));
+    }
+    
+    // Wait for kernel to complete and check for execution errors
+    err = cudaStreamSynchronize(stream);
+    if (err != cudaSuccess) {
+        printf("Lee-Mykland kernel execution failed: %s\n", cudaGetErrorString(err));
+    }
 }
 
 void launch_hawkes_computation(float* timestamps, float* intensity, float* branching,
@@ -322,7 +466,7 @@ void launch_poisson_computation(float* timestamps, float* prices, float* intensi
 }
 
 void launch_burst_computation(float* hawkes_int, float* poisson_surp, float* branching,
-                              bool* flags, float* scores, int n, float h_thresh,
+                              char* flags, float* scores, int n, float h_thresh,  // Changed bool* to char*
                               float p_thresh, float c_thresh, 
                               cudaStream_t stream) {
     int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;

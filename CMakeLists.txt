@@ -156,11 +156,67 @@ target_link_libraries(surprise_metrics ${SURPRISE_METRICS_LIBS})
 
 # Python bindings - make optional
 find_package(pybind11 QUIET)
+
+# If pybind11 not found via package manager, try Python-based detection
+if(NOT pybind11_FOUND)
+    execute_process(
+        COMMAND ${Python_EXECUTABLE} -c "import pybind11; print(pybind11.get_cmake_dir())"
+        OUTPUT_VARIABLE pybind11_CMAKE_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(pybind11_CMAKE_DIR)
+        find_package(pybind11 QUIET PATHS ${pybind11_CMAKE_DIR})
+        if(pybind11_FOUND)
+            message(STATUS "Found pybind11 via Python: ${pybind11_CMAKE_DIR}")
+        endif()
+    endif()
+endif()
+
+# If still not found, try local third_party directory
+if(NOT pybind11_FOUND)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/pybind11/include/pybind11/pybind11.h")
+        add_subdirectory(third_party/pybind11)
+        set(pybind11_FOUND TRUE)
+        message(STATUS "Using local pybind11 from third_party/")
+    endif()
+endif()
+
+# If still not found, try manual include path detection
+if(NOT pybind11_FOUND)
+    execute_process(
+        COMMAND ${Python_EXECUTABLE} -c "import pybind11; print(pybind11.get_include())"
+        OUTPUT_VARIABLE pybind11_INCLUDE_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(pybind11_INCLUDE_DIR AND EXISTS "${pybind11_INCLUDE_DIR}/pybind11/pybind11.h")
+        # Create a simple pybind11 target manually
+        add_library(pybind11::module INTERFACE IMPORTED)
+        target_include_directories(pybind11::module INTERFACE ${pybind11_INCLUDE_DIR})
+        target_compile_definitions(pybind11::module INTERFACE VERSION_INFO="dev")
+        set(pybind11_FOUND TRUE)
+        message(STATUS "Found pybind11 headers at: ${pybind11_INCLUDE_DIR}")
+    endif()
+endif()
+
 if(pybind11_FOUND)
-    pybind11_add_module(pysurprise_metrics python/bindings.cpp)
-    target_link_libraries(pysurprise_metrics PRIVATE surprise_metrics)
+    if(TARGET pybind11::module)
+        # Use the existing target
+        add_library(pysurprise_metrics MODULE python/bindings.cpp)
+        target_link_libraries(pysurprise_metrics PRIVATE surprise_metrics pybind11::module)
+        set_target_properties(pysurprise_metrics PROPERTIES PREFIX "${PYTHON_MODULE_PREFIX}" SUFFIX "${PYTHON_MODULE_EXTENSION}")
+    else()
+        # Use pybind11_add_module if available
+        pybind11_add_module(pysurprise_metrics python/bindings.cpp)
+        target_link_libraries(pysurprise_metrics PRIVATE surprise_metrics)
+    endif()
+    message(STATUS "Python bindings will be built")
 else()
     message(WARNING "pybind11 not found. Python bindings will not be built.")
+    message(STATUS "To enable Python bindings:")
+    message(STATUS "  1. Install pybind11: pip install pybind11")
+    message(STATUS "  2. Or clone pybind11 to third_party/: git submodule update --init --recursive")
 endif()
 
 # Executable
