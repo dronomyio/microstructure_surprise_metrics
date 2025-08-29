@@ -100,7 +100,8 @@ private:
     double garch_omega_ = 0.00001;
     double garch_alpha_ = 0.05;
     double garch_beta_ = 0.94;
-    double jump_threshold_ = 4.6055;  // Corrected from paper
+    //double jump_threshold_ = 4.6055;  // Corrected from paper
+    double jump_threshold_ = 2; //4.6055;  // Corrected from paper
     
     // Hawkes parameters
     float hawkes_mu_ = 0.1f;

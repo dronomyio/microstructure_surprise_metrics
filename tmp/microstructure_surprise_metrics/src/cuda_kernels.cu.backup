@@ -51,76 +51,8 @@ __global__ void garch_kernel(
     }
 }
 
-// CORRECTED Lee-Mykland kernel - based on Barndorff-Nielsen & Shephard (2004)
-__global__ void lee_mykland_kernel(
-    const float* __restrict__ returns,
-    float* __restrict__ local_vol,
-    float* __restrict__ test_stats,
-    char* __restrict__ jump_flags,
-    const int n,
-    const int window_size,
-    const float threshold
-) {
-    int gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-    if (gid >= window_size && gid < n) {
-        // Step 1: Compute REALIZED VARIANCE (RV) over the window
-        float rv = 0.0f;
-        for (int i = gid - window_size + 1; i <= gid; i++) {
-            if (i >= 0 && i < n) {
-                rv += returns[i] * returns[i];
-            }
-        }
-
-        // Step 2: Compute BIPOWER VARIATION (BV) over the window
-        // BV = (π/2) × Σ|r_{i}| × |r_{i-1}| for overlapping pairs
-        float bv = 0.0f;
-        int bv_count = 0;
-
-        // Key fix: Only sum over pairs where BOTH returns exist
-        for (int i = gid - window_size + 2; i <= gid; i++) {
-            if (i > 0 && i < n) {  // Ensure both i and i-1 are valid
-                bv += fabsf(returns[i]) * fabsf(returns[i-1]);
-                bv_count++;
-            }
-        }
-
-        // Apply the π/2 scaling factor - this is the KEY mathematical correction
-        if (bv_count > 0) {
-            bv = (M_PI / 2.0f) * bv;  // NO division by count here!
-        }
-
-        // Step 3: Local volatility estimate
-        // Use max(BV, small_value) to avoid numerical issues
-        float sigma_est = sqrtf(fmaxf(bv, rv * 1e-4f));  // Fallback to 1% of RV
-        local_vol[gid] = sigma_est;
-
-        // Step 4: Test statistic L = |r_t| / σ_t
-        test_stats[gid] = (sigma_est > 0) ? fabsf(returns[gid]) / sigma_est : 0.0f;
-
-        // Step 5: Critical value - simplified version first
-        // Use fixed threshold instead of complex formula for debugging
-        float critical_value = threshold;  // Start simple: threshold = 4.6
-
-        jump_flags[gid] = (test_stats[gid] > critical_value) ? 1 : 0;
-
-        // Debug output for validation
-        if (gid == window_size || gid == window_size + 10) { // Only a few debug prints
-            printf("DEBUG gid=%d: rv=%.6f, bv=%.6f, sigma=%.6f, L=%.6f, jump=%d\n",
-                   gid, rv, bv, sigma_est, test_stats[gid], jump_flags[gid]);
-        }
-    } else {
-        // Initialize boundary conditions
-        if (gid < n) {
-            local_vol[gid] = 0.0f;
-            test_stats[gid] = 0.0f;
-            jump_flags[gid] = 0;
-        }
-    }
-}
-
 // Lee-Mykland kernel with corrected bipower variation
-__global__ void lee_mykland_kernel1 (
+__global__ void lee_mykland_kernel(
     const float* __restrict__ returns,
     float* __restrict__ local_vol,
     float* __restrict__ test_stats,
@@ -131,48 +63,29 @@ __global__ void lee_mykland_kernel1 (
 ) {
     int gid = blockIdx.x * blockDim.x + threadIdx.x;
     
-    if (gid >= window_size && gid < n - 1) { //Ensure we don't access out of bounds
+    if (gid >= window_size && gid < n) {
         float bv = 0.0f;
-	int valid_pairs = 0;
         const float pi_over_2 = 1.5707963267948966f;
         
         // Fix: Ensure we don't access returns[i-1] when i=0
-        //int start_idx = (gid - window_size + 2 > 1) ? (gid - window_size + 1) : 1;
-        //for (int i = start_idx; i < gid; i++) {
-	// Compute bipower variation correctly
-        for (int i = gid - window_size + 2; i <= gid; i++) { // Start from i-1 and i available
+        int start_idx = (gid - window_size + 1 > 1) ? (gid - window_size + 1) : 1;
+        for (int i = start_idx; i < gid; i++) {
             if (i > 0 && i < n) { //ensure i-1 is valid
-               bv += fabsf(returns[i]) * fabsf(returns[i-1]);
-	       valid_pairs++;
+                bv += fabsf(returns[i]) * fabsf(returns[i-1]);
 	    }
         }
-
-	// Correct bipower variation scaling: BV = (π/2) * Σ|r_i||r_{i-1}|
-        if (valid_pairs > 0) {
-            bv = (M_PI / 2.0f) * bv / valid_pairs;
-        } else {
-            bv = 1e-8f; // Small positive value to avoid division by zero
-        }
         
-        /*// Adjust denominator for the actual number of terms used
+        // Adjust denominator for the actual number of terms used
         int actual_terms = gid - start_idx;
         if (actual_terms > 0) {
             bv *= pi_over_2 / actual_terms;
         } else {
             bv = 0.01f;  // Small default value to avoid division by zero
-        }*/
-        
-        //local_vol[gid] = sqrtf(bv);
-        local_vol[gid] = sqrtf(fmaxf(bv, 1e-8f));
-
-	// Lee-Mykland test statistic: L = |r_t| / σ_t
-        if (local_vol[gid] > 0) {
-            test_stats[gid] = fabsf(returns[gid]) / local_vol[gid];
-        } else {
-            test_stats[gid] = 0.0f;
         }
         
-        /*// Avoid division by zero
+        local_vol[gid] = sqrtf(bv);
+        
+        // Avoid division by zero
         float L = (local_vol[gid] > 0.0f) ? fabsf(returns[gid]) / local_vol[gid] : 0.0f;
         test_stats[gid] = L;
         
@@ -185,18 +98,12 @@ __global__ void lee_mykland_kernel1 (
         // Lee-Mykland critical value calculation
         // The threshold parameter is the critical value directly
         float critical_value = threshold;
-	*/
-	// Critical value calculation (corrected formula)
-        float log_n = logf(float(n));
-        float Cn = sqrtf(2.0f * log_n);
-        float Sn = (1.0f / Cn) + (logf(M_PI) + logf(log_n)) / (2.0f * Cn);
-        float critical_value = threshold + Cn * Sn;
         
-        jump_flags[gid] = (test_stats[gid] > critical_value) ? 1 : 0;  // Convert boolean to char (0 or 1)
+        jump_flags[gid] = (L > critical_value) ? 1 : 0;  // Convert boolean to char (0 or 1)
         
         // Debug output for jumps detected
-        if (test_stats[gid] > critical_value && gid < 100) {
-            printf("JUMP DETECTED at thread %d: L=%.6f > threshold=%.2f\n", gid,  critical_value);
+        if (L > critical_value && gid < 100) {
+            printf("JUMP DETECTED at thread %d: L=%.6f > threshold=%.2f\n", gid, L, critical_value);
         }
     }
 }
