@@ -4,6 +4,8 @@ build/
 *.a
 *.so
 *.dylib
+*.backup
+*.broken
 build-release/
 build-debug/
 *.back

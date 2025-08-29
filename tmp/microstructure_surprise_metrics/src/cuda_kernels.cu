@@ -40,7 +40,8 @@ __global__ void garch_kernel(
 }
 
 // Lee-Mykland kernel with corrected bipower variation
-__global__ void lee_mykland_kernel(
+// not working this impl
+/*__global__ void lee_mykland_kernel(
     const float* __restrict__ returns,
     float* __restrict__ local_vol,
     float* __restrict__ test_stats,
@@ -93,9 +94,59 @@ __global__ void lee_mykland_kernel(
         }
     }
 }
+*/
+// Fixed Lee-Mykland kernel
+__global__ void lee_mykland_kernel(
+    const float* __restrict__ returns,
+    float* __restrict__ local_vol,
+    float* __restrict__ test_stats,
+    //bool* __restrict__ jump_flags,
+    char* __restrict__ jump_flags,
+    const int n,
+    const int window_size,
+    const float threshold
+) {
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (gid >= window_size && gid < n) {
+        float bv = 0.0f;
+        const float pi_over_2 = 1.5707963267948966f;
+
+        // Fixed bounds checking
+        for (int i = gid - window_size + 1; i <= gid - 1; i++) {
+            if (i > 0) {  // Ensure we don't access negative indices
+                bv += fabsf(returns[i]) * fabsf(returns[i-1]);
+            }
+        }
+
+        if (window_size > 1) {
+            bv *= pi_over_2 / (window_size - 1);
+        }
+
+        local_vol[gid] = sqrtf(fmaxf(bv, 1e-8f));  // Prevent zero division
+
+        float L = fabsf(returns[gid]) / local_vol[gid];
+        test_stats[gid] = L;
+
+        float Cn = sqrtf(2.0f * logf(float(n)));
+        float Sn = 1.0f/Cn + (logf(3.14159f) + logf(2.0f * logf(float(n)))) / (2.0f * Cn);
+        float critical_value = threshold + Cn * Sn;
+
+        //jump_flags[gid] = (L > critical_value); //not bool
+	jump_flags[gid] = (L > critical_value) ? 1 : 0;  // Convert boolean to char (0 or 1)
+    } else {
+        // Initialize output for invalid indices
+        if (gid < n) {
+            local_vol[gid] = 0.0f;
+            test_stats[gid] = 0.0f;
+            jump_flags[gid] = false;
+        }
+    }
+}
 
 // Corrected BNS kernel - fixed tri-power quarticity scaling
-__global__ void bns_kernel(
+//impl not working
+/*__global__ void bns_kernel(
     const float* __restrict__ returns,
     float* __restrict__ rv,
     float* __restrict__ bv,
@@ -149,6 +200,83 @@ __global__ void bns_kernel(
                 test_stats[gid] = 0.0f;
             }
         } else {
+            test_stats[gid] = 0.0f;
+        }
+    }
+}
+*/
+// Fixed BNS kernel
+__global__ void bns_kernel(
+    const float* __restrict__ returns,
+    float* __restrict__ rv,
+    float* __restrict__ bv,
+    float* __restrict__ tq,
+    float* __restrict__ test_stats,
+    const int n,
+    const int window_size
+) {
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (gid <= n - window_size) {
+        float local_rv = 0.0f;
+        float local_bv = 0.0f;
+        float local_tq = 0.0f;
+
+        const float pi_over_2 = 1.5707963267948966f;
+        const float mu_43 = 1.67f;
+
+        for (int i = 0; i < window_size; i++) {
+            int idx = gid + i;
+            if (idx < n) {
+                float r = returns[idx];
+                local_rv += r * r;
+
+                // Fixed bipower variation - use consecutive returns
+                if (i > 0) {
+                    local_bv += fabsf(returns[idx]) * fabsf(returns[idx-1]);
+                }
+
+                // Fixed tri-power quarticity with bounds checking
+                if (i > 1 && idx >= 2) {
+                    float r1 = powf(fabsf(returns[idx]), 4.0f/3.0f);
+                    float r2 = powf(fabsf(returns[idx-1]), 4.0f/3.0f);
+                    float r3 = powf(fabsf(returns[idx-2]), 4.0f/3.0f);
+                    local_tq += r1 * r2 * r3;
+                }
+            }
+        }
+
+        if (window_size > 1) {
+            local_bv *= pi_over_2 / (window_size - 1);
+        }
+        if (window_size > 2) {
+            local_tq *= powf(mu_43, -3.0f) / (window_size - 2);
+        }
+
+        rv[gid] = local_rv;
+        bv[gid] = local_bv;
+        tq[gid] = local_tq;
+
+        // Compute BNS test statistic with better numerical stability
+        if (local_rv > 1e-8f && local_bv > 1e-8f && local_tq > 1e-8f) {
+            float jump_component = fmaxf(0.0f, local_rv - local_bv);
+            float theta = 0.609f;
+            float denominator = sqrtf(theta * local_tq / (local_bv * local_bv));
+
+            if (denominator > 1e-8f) {
+                test_stats[gid] = sqrtf(float(window_size)) * (jump_component / local_rv) / denominator;
+            } else {
+                test_stats[gid] = 0.0f;
+            }
+        } else {
+            test_stats[gid] = 0.0f;
+        }
+    } else {
+        // Initialize output for invalid indices
+        if (gid < n) {
+            rv[gid] = 0.0f;
+            bv[gid] = 0.0f;
+            tq[gid] = 0.0f;
             test_stats[gid] = 0.0f;
         }
     }
