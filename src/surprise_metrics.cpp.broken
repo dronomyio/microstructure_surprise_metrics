@@ -228,7 +228,7 @@ private:
         // 6. Burst detection
         cuda::launch_burst_computation(
             d_hawkes_intensity_, d_poisson_surprise_, d_branching_ratio_,
-            d_burst_flags_, d_burst_scores_ ,
+            d_burst_flags_, d_burst_scores_,
             n_trades, 0.8f, 3.0f, 4.0f
         );
         
