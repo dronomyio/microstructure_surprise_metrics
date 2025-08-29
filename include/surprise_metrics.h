@@ -52,7 +52,9 @@ struct Trade {
     volume_t size;
     char exchange;
     uint8_t conditions[4];
-} __attribute__((packed));
+};
+// Remove the packed attribute if you don't need tight memory packing:
+//} __attribute__((packed));
 
 struct Quote {
     timestamp_t timestamp;
@@ -62,7 +64,9 @@ struct Quote {
     volume_t ask_size;
     char bid_exchange;
     char ask_exchange;
-} __attribute__((packed));
+};
+// Remove the packed attribute if you don't need tight memory packing:
+//} __attribute__((packed));
 
 struct SurpriseMetrics {
     float standardized_return;

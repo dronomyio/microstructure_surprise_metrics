@@ -272,11 +272,17 @@ private:
         cudaMemcpy(lm_stats.data(), d_lm_stats, n_returns * sizeof(float), cudaMemcpyDeviceToHost);
         //cudaMemcpy(jump_flags.data(), d_jump_flags_, n_returns * sizeof(bool), cudaMemcpyDeviceToHost);
 	//cudaMemcpy(jump_flags.data(), d_jump_flags_, n_returns * sizeof(bool), cudaMemcpyDeviceToHost);
-	cudaMemcpy(jump_flags.data(), d_jump_flags_, n_returns * sizeof(bool), cudaMemcpyDeviceToHost);
-        cudaMemcpy(burst_scores.data(), d_burst_scores_, n_trades * sizeof(float), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(jump_flags.data(), d_jump_flags_, n_returns * sizeof(bool), cudaMemcpyDeviceToHost);
+        //cudaMemcpy(burst_scores.data(), d_burst_scores_, n_trades * sizeof(float), cudaMemcpyDeviceToHost);
         //cudaMemcpy(burst_flags.data(), d_burst_flags_, n_trades * sizeof(bool), cudaMemcpyDeviceToHost);
 	//cudaMemcpy(burst_flags.data(), d_burst_flags_, n_trades * sizeof(bool), cudaMemcpyDeviceToHost);
+	//cudaMemcpy(burst_flags.data(), d_burst_flags_, n_trades * sizeof(bool), cudaMemcpyDeviceToHost);
+	//
+	// Replace the problematic lines with:
+	cudaMemcpy(jump_flags.data(), d_jump_flags_, n_returns * sizeof(bool), cudaMemcpyDeviceToHost);
+	cudaMemcpy(burst_scores.data(), d_burst_scores_, n_trades * sizeof(float), cudaMemcpyDeviceToHost);
 	cudaMemcpy(burst_flags.data(), d_burst_flags_, n_trades * sizeof(bool), cudaMemcpyDeviceToHost);
+
         cudaMemcpy(branching_ratio.data(), d_branching_ratio_, n_trades * sizeof(float), cudaMemcpyDeviceToHost);
         cudaMemcpy(endogeneity.data(), d_endogeneity_, n_trades * sizeof(float), cudaMemcpyDeviceToHost);
         
