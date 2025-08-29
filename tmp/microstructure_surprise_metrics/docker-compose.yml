@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  surprise_metrics:
+    build: .
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      - CUDA_VISIBLE_DEVICES=0,1,2,3
+      - OMP_NUM_THREADS=32
+      - MKL_NUM_THREADS=32
+      - POLYGON_API_KEY=${POLYGON_API_KEY}
+    volumes:
+      - ./data:/app/data
+      - ./output:/app/output
+      - ./logs:/app/logs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - metrics_network
+    ports:
+      - "8080:8080"
+      - "6006:6006"  # TensorBoard
+    command: python3 scripts/run_analysis.py --config /app/config.yaml
+
+  redis:
+    image: redis:alpine
+    networks:
+      - metrics_network
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  prometheus:
+    image: prom/prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - metrics_network
+    ports:
+      - "9090:9090"
+
+networks:
+  metrics_network:
+    driver: bridge
+
+volumes:
+  redis_data:
+  prometheus_data:

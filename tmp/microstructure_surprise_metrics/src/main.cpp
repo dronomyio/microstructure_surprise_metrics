@@ -1,0 +1,147 @@
+#include <iostream>
+#include <vector>
+#include <chrono>
+#include <random>
+#include <cstring>
+#include <cuda_runtime.h>  // Add CUDA runtime header
+#include "surprise_metrics.h"
+
+using namespace surprise_metrics;
+
+int main(int argc, char* argv[]) {
+    std::cout << "SurpriseMetrics Runner v0.1.0\n";
+    std::cout << "=============================\n\n";
+    
+    // Check CUDA availability
+    int device_count = 0;
+    cudaError_t error = cudaGetDeviceCount(&device_count);
+    
+    if (error != cudaSuccess) {
+        std::cerr << "CUDA Error: " << cudaGetErrorString(error) << std::endl;
+        device_count = 0;
+    }
+    
+    std::cout << "CUDA Devices Found: " << device_count << std::endl;
+    
+    for (int i = 0; i < device_count; ++i) {
+        cudaDeviceProp prop;
+        cudaGetDeviceProperties(&prop, i);
+        std::cout << "  Device " << i << ": " << prop.name 
+                  << " (SM " << prop.major << "." << prop.minor << ")"
+                  << " Memory: " << prop.totalGlobalMem / (1024*1024) << " MB\n";
+    }
+    
+    std::cout << "\nInitializing MetricsCalculator...\n";
+    
+    try {
+        // Initialize calculator with NO GPUs for now to avoid CUDA allocation issues
+        //MetricsCalculator calculator(0, 10000);  // 0 GPUs, smaller buffer
+        MetricsCalculator calculator(device_count, 10000);  // 4 GPUs, smaller buffer
+        
+        // Set parameters - use more sensitive settings for testing
+        calculator.set_garch_params(0.00001, 0.05, 0.94);
+        calculator.set_jump_threshold(3.0);  // Lower threshold for more sensitive detection
+        calculator.set_window_size(50);      // Smaller window for limited data
+        
+        std::cout << "Generating test data with artificial jumps...\n";
+        
+        // Generate test dataset with artificial jumps
+        std::vector<Trade> trades;
+        trades.reserve(1000);
+        
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::normal_distribution<> normal_dist(0.0, 0.01);  // Normal returns ~1%
+        std::uniform_real_distribution<> jump_prob(0.0, 1.0);
+        std::normal_distribution<> jump_size(-0.05, 0.05);  // Jump size ~5%
+        
+        auto start_time = std::chrono::steady_clock::now();
+        
+        double price = 100.0;  // Starting price
+        
+        for (int i = 0; i < 1000; ++i) {
+            Trade trade;
+            trade.timestamp = std::chrono::nanoseconds(
+                start_time.time_since_epoch().count() + i * 1000000
+            );
+            
+            // Generate return: normal + occasional jumps
+            double return_val = normal_dist(gen);
+            
+            // Add jumps with 2% probability
+            if (jump_prob(gen) < 0.02) {
+                double jump = jump_size(gen);
+                return_val += jump;
+                std::cout << "Added jump at trade " << i << " with size " << jump << std::endl;
+            }
+            
+            // Update price
+            price *= (1.0 + return_val);
+            trade.price = price;
+            
+            trade.size = 100;  // Fixed size for simplicity
+            trade.exchange = 'N';
+            std::memset(trade.conditions, 0, sizeof(trade.conditions));
+            trades.push_back(trade);
+        }
+        
+        std::cout << "Generated " << trades.size() << " trades\n";
+        
+        // Process trades
+        std::cout << "Processing trades...\n";
+        auto process_start = std::chrono::high_resolution_clock::now();
+        
+        calculator.process_trades(trades);
+        
+        auto process_end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(process_end - process_start);
+        
+        std::cout << "Processing completed in " << duration.count() << " ms\n";
+        
+        // Get metrics
+        auto metrics = calculator.get_metrics();
+        
+        // Print detailed analysis
+        int jump_count = 0;
+        float max_zscore = 0.0f;
+        float max_lm_stat = 0.0f;
+        float max_bns_stat = 0.0f;
+        
+        std::cout << "\nDetailed Analysis:\n";
+        std::cout << "First 10 metrics:\n";
+        
+        for (size_t i = 0; i < std::min(size_t(10), metrics.size()); ++i) {
+            const auto& m = metrics[i];
+            std::cout << "  [" << i << "] Return: " << m.standardized_return 
+                      << ", LM: " << m.lee_mykland_stat 
+                      << ", BNS: " << m.bns_stat
+                      << ", Jump: " << (m.jump_detected ? "YES" : "NO") << "\n";
+        }
+        
+        for (const auto& m : metrics) {
+            if (m.jump_detected) jump_count++;
+            max_zscore = std::max(max_zscore, std::abs(m.standardized_return));
+            max_lm_stat = std::max(max_lm_stat, m.lee_mykland_stat);
+            max_bns_stat = std::max(max_bns_stat, m.bns_stat);
+        }
+        
+        std::cout << "\nResults Summary:\n";
+        std::cout << "  Total Metrics: " << metrics.size() << "\n";
+        std::cout << "  Jumps Detected: " << jump_count << "\n";
+        std::cout << "  Max Z-Score: " << max_zscore << "\n";
+        std::cout << "  Max LM Statistic: " << max_lm_stat << "\n";
+        std::cout << "  Max BNS Statistic: " << max_bns_stat << "\n";
+        
+        if (duration.count() > 0) {
+            std::cout << "  Throughput: " << (trades.size() * 1000.0 / duration.count()) 
+                      << " trades/sec\n";
+        }
+        
+    } catch (const std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 1;
+    }
+    
+    return 0;
+}
+
