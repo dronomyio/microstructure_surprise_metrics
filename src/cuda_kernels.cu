@@ -51,8 +51,9 @@ __global__ void garch_kernel(
     }
 }
 
-// CORRECTED Lee-Mykland kernel - based on Barndorff-Nielsen & Shephard (2004)
-__global__ void lee_mykland_kernel(
+//ISSUES - Not working
+// Further CORRECTED Implementation based on Lee-Mykland (2008) paper
+__global__ void lee_mykland_kernel22 (
     const float* __restrict__ returns,
     float* __restrict__ local_vol,
     float* __restrict__ test_stats,
@@ -64,53 +65,52 @@ __global__ void lee_mykland_kernel(
     int gid = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (gid >= window_size && gid < n) {
-        // Step 1: Compute REALIZED VARIANCE (RV) over the window
-        float rv = 0.0f;
-        for (int i = gid - window_size + 1; i <= gid; i++) {
-            if (i >= 0 && i < n) {
-                rv += returns[i] * returns[i];
+        // Step 1: Compute instantaneous volatility using bipower variation
+        // Formula from paper: σ̂²(ti) = (1/(K-2)) * Σ|r_j||r_{j-1}|
+        float bv_sum = 0.0f;
+        int valid_pairs = 0;
+
+        // Sum over window: from i-K+2 to i-1 (paper's formula)
+        for (int j = gid - window_size + 2; j <= gid - 1; j++) {
+            if (j > 0 && j < n) {
+                bv_sum += fabsf(returns[j]) * fabsf(returns[j-1]);
+                valid_pairs++;
             }
         }
 
-        // Step 2: Compute BIPOWER VARIATION (BV) over the window
-        // BV = (π/2) × Σ|r_{i}| × |r_{i-1}| for overlapping pairs
-        float bv = 0.0f;
-        int bv_count = 0;
+        // Paper formula: σ̂²(ti) = (1/(K-2)) * Σ|r_j||r_{j-1}|
+        // NO π/2 factor in the base bipower variation calculation
+        float sigma_squared = (valid_pairs > 0) ? (bv_sum / valid_pairs) : 1e-8f;
+        local_vol[gid] = sqrtf(sigma_squared);
 
-        // Key fix: Only sum over pairs where BOTH returns exist
-        for (int i = gid - window_size + 2; i <= gid; i++) {
-            if (i > 0 && i < n) {  // Ensure both i and i-1 are valid
-                bv += fabsf(returns[i]) * fabsf(returns[i-1]);
-                bv_count++;
-            }
-        }
+        // Step 2: Lee-Mykland test statistic
+        // L(i) = r_i / σ̂(ti) where r_i is the return at time i
+        test_stats[gid] = fabsf(returns[gid]) / local_vol[gid];
 
-        // Apply the π/2 scaling factor - this is the KEY mathematical correction
-        if (bv_count > 0) {
-            bv = (M_PI / 2.0f) * bv;  // NO division by count here!
-        }
+        // Step 3: Critical value computation from paper
+        // From Lemma 1: Critical value depends on distribution of maximums
+        float log_n = logf(float(n));
+        float c = 0.7979f;  // c = E[|U|] = √(2/π) from paper
 
-        // Step 3: Local volatility estimate
-        // Use max(BV, small_value) to avoid numerical issues
-        float sigma_est = sqrtf(fmaxf(bv, rv * 1e-4f));  // Fallback to 1% of RV
-        local_vol[gid] = sigma_est;
+        // Paper formulas from Lemma 1:
+        float Cn = sqrtf(2.0f * log_n) / c -
+                  (logf(M_PI) + logf(2.0f * log_n)) / (2.0f * c * sqrtf(2.0f * log_n));
+        float Sn = 1.0f / (c * sqrtf(2.0f * log_n));
 
-        // Step 4: Test statistic L = |r_t| / σ_t
-        test_stats[gid] = (sigma_est > 0) ? fabsf(returns[gid]) / sigma_est : 0.0f;
+        // For 1% significance level: β* = 4.6001 (from paper)
+        float beta_star = 4.6001f;
+        float critical_value = beta_star * Sn + Cn;
 
-        // Step 5: Critical value - simplified version first
-        // Use fixed threshold instead of complex formula for debugging
-        float critical_value = threshold;  // Start simple: threshold = 4.6
-
+        // Paper uses: |L(i)| > critical_value for jump detection
         jump_flags[gid] = (test_stats[gid] > critical_value) ? 1 : 0;
 
-        // Debug output for validation
-        if (gid == window_size || gid == window_size + 10) { // Only a few debug prints
-            printf("DEBUG gid=%d: rv=%.6f, bv=%.6f, sigma=%.6f, L=%.6f, jump=%d\n",
-                   gid, rv, bv, sigma_est, test_stats[gid], jump_flags[gid]);
+        // Debug output at known jump locations
+        if (gid == 123 || gid == 144 || gid == 281 || gid == 423 || gid == 623 || gid == 723) {
+            printf("PAPER-ACCURATE gid=%d: bv_sum=%.8f, pairs=%d, σ²=%.8f, σ=%.6f, L=%.3f, crit=%.3f, jump=%d\n",
+                   gid, bv_sum, valid_pairs, sigma_squared, local_vol[gid],
+                   test_stats[gid], critical_value, jump_flags[gid]);
         }
     } else {
-        // Initialize boundary conditions
         if (gid < n) {
             local_vol[gid] = 0.0f;
             test_stats[gid] = 0.0f;
@@ -119,6 +119,7 @@ __global__ void lee_mykland_kernel(
     }
 }
 
+//BAD
 // Lee-Mykland kernel with corrected bipower variation
 __global__ void lee_mykland_kernel1 (
     const float* __restrict__ returns,
@@ -385,14 +386,100 @@ __global__ void standardized_returns_kernel(
     }
 }
 
+/**
+  * https://galton.uchicago.edu/~mykland/paperlinks/LeeMykland-2535.pdf
+  * Looking at the code and referencing the Lee-Mykland paper, 
+  * you're implementing Equation (8) for the bipower variation 
+  * volatility estimator σ̂²(ti) = (1/(K-2)) * Σ|rj||rj-1|, Equation (7) 
+  * for the test statistic L(i) = |ri|/σ̂(ti), and Equations (12)-(13) 
+  * from Lemma 1 for the critical value calculation using the extreme value 
+  * distribution with Cn and Sn parameters.
+  */
+
+// CORRECTED Implementation based on Lee-Mykland (2008) paper
+__global__ void lee_mykland_kernel(
+    const float* __restrict__ returns,
+    float* __restrict__ local_vol,
+    float* __restrict__ test_stats,
+    char* __restrict__ jump_flags,
+    const int n,
+    const int window_size,
+    const float threshold
+) {
+    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (gid >= window_size && gid < n) {
+        // Step 1: Compute instantaneous volatility using bipower variation
+        // Formula from paper: σ̂²(ti) = (1/(K-2)) * Σ|r_j||r_{j-1}|
+        float bv_sum = 0.0f;
+        int valid_pairs = 0;
+
+        // Sum over window: from i-K+2 to i-1 (paper's formula)
+        for (int j = gid - window_size + 2; j <= gid - 1; j++) {
+            if (j > 0 && j < n) {
+                bv_sum += fabsf(returns[j]) * fabsf(returns[j-1]);
+                valid_pairs++;
+            }
+        }
+
+        // Paper formula: σ̂²(ti) = (1/(K-2)) * Σ|r_j||r_{j-1}|
+        // Apply the π/2 scaling factor as per Barndorff-Nielsen & Shephard (2004)
+        float sigma_squared = (valid_pairs > 0) ? ((M_PI / 2.0f) * bv_sum / valid_pairs) : 1e-8f;
+        local_vol[gid] = sqrtf(sigma_squared);
+
+        // Step 2: Lee-Mykland test statistic
+        // L(i) = r_i / σ̂(ti) where r_i is the return at time i
+        test_stats[gid] = fabsf(returns[gid]) / local_vol[gid];
+
+        // Step 3: Critical value computation from paper
+        // From Lemma 1: Critical value depends on distribution of maximums
+        float log_n = logf(float(n));
+        float c = 0.7979f;  // c = E[|U|] = √(2/π) from paper
+
+        // Paper formulas from Lemma 1:
+	//eq 12
+        float Cn = sqrtf(2.0f * log_n) / c -
+                  (logf(M_PI) + logf(2.0f * log_n)) / (2.0f * c * sqrtf(2.0f * log_n));
+	//eq 13
+        float Sn = 1.0f / (c * sqrtf(2.0f * log_n));
+
+        // For 1% significance level: β* = 4.6001 (from paper)
+        float beta_star = 4.6001f;
+        float critical_value = beta_star * Sn + Cn;
+
+        // Debug: Print dynamic critical value calculation
+        if (gid == 123) {
+            printf("CRITICAL VALUE CALC: n=%d, log_n=%.3f, Cn=%.3f, Sn=%.3f, critical=%.3f\n",
+                   n, log_n, Cn, Sn, critical_value);
+        }
+
+        // Paper uses: |L(i)| > critical_value for jump detection
+        jump_flags[gid] = (test_stats[gid] > critical_value) ? 1 : 0;
+
+        // Debug output at known jump locations with detailed calculation check
+        if (gid == 123 || gid == 144 || gid == 281 || gid == 423 || gid == 623 || gid == 723) {
+            float manual_L = fabsf(returns[gid]) / local_vol[gid];
+            printf("PAPER-ACCURATE gid=%d: return_raw=%.6f, bv_sum=%.8f, pairs=%d, σ²=%.8f, σ=%.6f, L_calc=%.3f, L_stored=%.3f, crit=%.3f, jump=%d\n",
+                   gid, returns[gid], bv_sum, valid_pairs, sigma_squared, local_vol[gid],
+                   manual_L, test_stats[gid], critical_value, jump_flags[gid]);
+        }
+    } else {
+        if (gid < n) {
+            local_vol[gid] = 0.0f;
+            test_stats[gid] = 0.0f;
+            jump_flags[gid] = 0;
+        }
+    }
+}
+
 // ==================== LAUNCHER IMPLEMENTATIONS ====================
 
-void launch_garch_estimation(float* returns, float* sigma, int n, 
+void launch_garch_estimation(float* returns, float* sigma, int n,
                              float omega, float alpha, float beta,
                              cudaStream_t stream) {
     /*int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     size_t shared_mem_size = BLOCK_SIZE * sizeof(float);
-    
+
     garch_kernel<<<blocks, BLOCK_SIZE, shared_mem_size, stream>>>(
         returns, sigma, n, omega, alpha, beta
     );*/
@@ -402,23 +489,23 @@ void launch_garch_estimation(float* returns, float* sigma, int n,
     );
 }
 
-void launch_jump_detection(float* returns, float* local_vol, 
+void launch_jump_detection(float* returns, float* local_vol,
                            char* jump_flags, int n, float threshold,  // Changed bool* to char*
                            cudaStream_t stream) {
     int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
-    
+
     float* test_stats;
     cudaMalloc(&test_stats, n * sizeof(float));
-    
+
     lee_mykland_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(
         returns, local_vol, test_stats, jump_flags, n, 100, threshold
     );
-    
+
     cudaFree(test_stats);
 }
 
 void launch_bns_computation(float* returns, float* rv, float* bv, float* tq,
-                            float* stats, int n, int window, 
+                            float* stats, int n, int window,
                             cudaStream_t stream) {
     int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
     bns_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(
@@ -426,12 +513,72 @@ void launch_bns_computation(float* returns, float* rv, float* bv, float* tq,
     );
 }
 
+
+// Alternative: Use paper's recommended window size formula
+int calculate_optimal_window_size(int observations_per_day) {
+    // Paper recommendation: K should satisfy K = O(Δt^α) where -1 < α < -0.5
+    // For different frequencies, paper suggests:
+    // - 5-minute data (288 obs/day): K = 270
+    // - 15-minute data (96 obs/day): K = 156
+    // - 30-minute data (48 obs/day): K = 110
+    // - 1-hour data (24 obs/day): K = 78
+    // - Daily data (1 obs/day): K = 16
+
+    if (observations_per_day >= 288) return 270;      // 5-minute or higher
+    else if (observations_per_day >= 96) return 156;  // 15-minute
+    else if (observations_per_day >= 48) return 110;  // 30-minute
+    else if (observations_per_day >= 24) return 78;   // 1-hour
+    else return 16;                                   // Daily or lower
+}
+
+// Paper-accurate launcher
+void launch_lee_mykland_computation_(
+    float* returns, float* local_vol, float* test_stats, char* jump_flags,
+    int n, cudaStream_t stream = 0
+) {
+    // Use paper's recommended window size (not user-specified)
+    int optimal_K = calculate_optimal_window_size(96);  // Assuming 15-min data
+
+    printf("Using paper-recommended window size: K=%d\n", optimal_K);
+
+    int blocks = (n + 256 - 1) / 256;
+    lee_mykland_kernel<<<blocks, 256, 0, stream>>>(
+        returns, local_vol, test_stats, jump_flags, n, optimal_K, 4.6001f
+    );
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        printf("CUDA kernel error: %s\n", cudaGetErrorString(err));
+    }
+}
+
+// Alternative: Use paper's recommended window size formula
+int calculate_optimal_window_size11(int observations_per_day) {
+    // Paper recommendation: K should satisfy K = O(Δt^α) where -1 < α < -0.5
+    // For different frequencies, paper suggests:
+    // - 5-minute data (288 obs/day): K = 270
+    // - 15-minute data (96 obs/day): K = 156
+    // - 30-minute data (48 obs/day): K = 110
+    // - 1-hour data (24 obs/day): K = 78
+    // - Daily data (1 obs/day): K = 16
+
+    if (observations_per_day >= 288) return 270;      // 5-minute or higher
+    else if (observations_per_day >= 96) return 156;  // 15-minute
+    else if (observations_per_day >= 48) return 110;  // 30-minute
+    else if (observations_per_day >= 24) return 78;   // 1-hour
+    else return 16;                                   // Daily or lower
+}
+
 void launch_lee_mykland_computation(float* returns, float* local_vol, float* test_stats,
                                     char* jump_flags, int n, int window, float threshold,  // Changed bool* to char*
                                     cudaStream_t stream) {
     int blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    // Use paper's recommended window size (not user-specified)
+    int optimal_K = calculate_optimal_window_size(96);  // Assuming 15-min data
+
     lee_mykland_kernel<<<blocks, BLOCK_SIZE, 0, stream>>>(
-        returns, local_vol, test_stats, jump_flags, n, window, threshold
+     //   returns, local_vol, test_stats, jump_flags, n, window, threshold
+        returns, local_vol, test_stats, jump_flags, n, optimal_K, threshold
     );
     
     // Check for kernel launch errors
