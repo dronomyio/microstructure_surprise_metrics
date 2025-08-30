@@ -1,0 +1,242 @@
+<svg width="1000" height="800" xmlns="http://www.w3.org/2000/svg">
+  <style>
+    .title { font: bold 18px monospace; fill: #00ff00; }
+    .subtitle { font: 14px monospace; fill: #00ff00; }
+    .label { font: 12px monospace; fill: #cccccc; }
+    .code { font: 11px monospace; fill: #ffff00; }
+    .block-border { stroke: #00aa00; stroke-width: 2; fill: none; }
+    .thread-skip { fill: #ff4444; stroke: #ffffff; stroke-width: 1; }
+    .thread-active { fill: #00aa00; stroke: #ffffff; stroke-width: 1; }
+    .thread-boundary { fill: #ffaa00; stroke: #000000; stroke-width: 1; }
+    .thread-text { font: 9px monospace; text-anchor: middle; dominant-baseline: central; }
+    .data-current { fill: #ff6600; stroke: #ffffff; stroke-width: 1; }
+    .data-window { fill: #0066ff; stroke: #ffffff; stroke-width: 1; }
+    .data-excluded { fill: #666666; stroke: #999999; stroke-width: 1; }
+    .data-text { font: 8px monospace; text-anchor: middle; dominant-baseline: central; fill: white; }
+    .formula-bg { fill: #2a2a2a; stroke: #00ff00; stroke-width: 2; }
+    .arrow { stroke: #ffaa00; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+  </style>
+  
+  <!-- Arrow marker definition -->
+  <defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#ffaa00" />
+    </marker>
+  </defs>
+  
+  <!-- Title -->
+  <text x="500" y="25" class="title" text-anchor="middle">CUDA Lee-Mykland Thread Mapping</text>
+  
+  <!-- Thread ID Formula -->
+  <rect x="50" y="40" width="900" height="30" class="formula-bg" rx="5"/>
+  <text x="60" y="58" class="code">gid = blockIdx.x * blockDim.x + threadIdx.x</text>
+  
+  <!-- Block 0 -->
+  <text x="50" y="100" class="subtitle">Block 0 (blockIdx.x = 0, blockDim.x = 16)</text>
+  <rect x="40" y="110" width="540" height="80" class="block-border" rx="5"/>
+  
+  <!-- Block 0 Threads -->
+  <g id="block0">
+    <!-- First row of threads 0-7 -->
+    <g transform="translate(60, 130)">
+      <!-- Thread 0-9 (skipped, red) -->
+      <rect x="0" y="0" width="25" height="25" class="thread-skip"/>
+      <text x="12.5" y="12.5" class="thread-text" fill="white">0</text>
+      <rect x="30" y="0" width="25" height="25" class="thread-skip"/>
+      <text x="42.5" y="12.5" class="thread-text" fill="white">1</text>
+      <rect x="60" y="0" width="25" height="25" class="thread-skip"/>
+      <text x="72.5" y="12.5" class="thread-text" fill="white">2</text>
+      <rect x="90" y="0" width="25" height="25" class="thread-skip"/>
+      <text x="102.5" y="12.5" class="thread-text" fill="white">3</text>
+      <rect x="120" y="0" width="25" height="25" class="thread-skip"/>
+      <text x="132.5" y="12.5" class="thread-text" fill="white">4</text>
+      <rect x="150" y="0" width="25" height="25" class="thread-skip"/>
+      <text x="162.5" y="12.5" class="thread-text" fill="white">5</text>
+      <rect x="180" y="0" width="25" height="25" class="thread-skip"/>
+      <text x="192.5" y="12.5" class="thread-text" fill="white">6</text>
+      <rect x="210" y="0" width="25" height="25" class="thread-skip"/>
+      <text x="222.5" y="12.5" class="thread-text" fill="white">7</text>
+      
+      <!-- Thread 8-15 (second row) -->
+      <rect x="0" y="30" width="25" height="25" class="thread-skip"/>
+      <text x="12.5" y="42.5" class="thread-text" fill="white">8</text>
+      <rect x="30" y="30" width="25" height="25" class="thread-skip"/>
+      <text x="42.5" y="42.5" class="thread-text" fill="white">9</text>
+      <rect x="60" y="30" width="25" height="25" class="thread-active"/>
+      <text x="72.5" y="42.5" class="thread-text" fill="white">10</text>
+      <rect x="90" y="30" width="25" height="25" class="thread-active"/>
+      <text x="102.5" y="42.5" class="thread-text" fill="white">11</text>
+      <rect x="120" y="30" width="25" height="25" class="thread-active"/>
+      <text x="132.5" y="42.5" class="thread-text" fill="white">12</text>
+      <rect x="150" y="30" width="25" height="25" class="thread-active"/>
+      <text x="162.5" y="42.5" class="thread-text" fill="white">13</text>
+      <rect x="180" y="30" width="25" height="25" class="thread-active"/>
+      <text x="192.5" y="42.5" class="thread-text" fill="white">14</text>
+      <rect x="210" y="30" width="25" height="25" class="thread-active"/>
+      <text x="222.5" y="42.5" class="thread-text" fill="white">15</text>
+    </g>
+    
+    <!-- Calculation examples -->
+    <text x="300" y="145" class="label">gid = 0*16 + 0 = 0</text>
+    <text x="300" y="160" class="label">gid = 0*16 + 10 = 10</text>
+    <text x="300" y="175" class="label">gid = 0*16 + 15 = 15</text>
+  </g>
+  
+  <!-- Block 1 -->
+  <text x="50" y="220" class="subtitle">Block 1 (blockIdx.x = 1, blockDim.x = 16)</text>
+  <rect x="40" y="230" width="540" height="80" class="block-border" rx="5"/>
+  
+  <!-- Block 1 Threads -->
+  <g id="block1">
+    <g transform="translate(60, 250)">
+      <!-- Thread 16-23 (first row) -->
+      <rect x="0" y="0" width="25" height="25" class="thread-active"/>
+      <text x="12.5" y="12.5" class="thread-text" fill="white">16</text>
+      <rect x="30" y="0" width="25" height="25" class="thread-active"/>
+      <text x="42.5" y="12.5" class="thread-text" fill="white">17</text>
+      <rect x="60" y="0" width="25" height="25" class="thread-active"/>
+      <text x="72.5" y="12.5" class="thread-text" fill="white">18</text>
+      <rect x="90" y="0" width="25" height="25" class="thread-active"/>
+      <text x="102.5" y="12.5" class="thread-text" fill="white">19</text>
+      <rect x="120" y="0" width="25" height="25" class="thread-active"/>
+      <text x="132.5" y="12.5" class="thread-text" fill="white">20</text>
+      <rect x="150" y="0" width="25" height="25" class="thread-active"/>
+      <text x="162.5" y="12.5" class="thread-text" fill="white">21</text>
+      <rect x="180" y="0" width="25" height="25" class="thread-active"/>
+      <text x="192.5" y="12.5" class="thread-text" fill="white">22</text>
+      <rect x="210" y="0" width="25" height="25" class="thread-active"/>
+      <text x="222.5" y="12.5" class="thread-text" fill="white">23</text>
+      
+      <!-- Thread 24-31 (second row) -->
+      <rect x="0" y="30" width="25" height="25" class="thread-active"/>
+      <text x="12.5" y="42.5" class="thread-text" fill="white">24</text>
+      <rect x="30" y="30" width="25" height="25" class="thread-boundary"/>
+      <text x="42.5" y="42.5" class="thread-text" fill="black">25</text>
+      <rect x="60" y="30" width="25" height="25" class="thread-boundary"/>
+      <text x="72.5" y="42.5" class="thread-text" fill="black">26</text>
+      <rect x="90" y="30" width="25" height="25" class="thread-boundary"/>
+      <text x="102.5" y="42.5" class="thread-text" fill="black">27</text>
+      <rect x="120" y="30" width="25" height="25" class="thread-boundary"/>
+      <text x="132.5" y="42.5" class="thread-text" fill="black">28</text>
+      <rect x="150" y="30" width="25" height="25" class="thread-boundary"/>
+      <text x="162.5" y="42.5" class="thread-text" fill="black">29</text>
+      <rect x="180" y="30" width="25" height="25" class="thread-boundary"/>
+      <text x="192.5" y="42.5" class="thread-text" fill="black">30</text>
+      <rect x="210" y="30" width="25" height="25" class="thread-boundary"/>
+      <text x="222.5" y="42.5" class="thread-text" fill="black">31</text>
+    </g>
+    
+    <!-- Calculation examples -->
+    <text x="300" y="265" class="label">gid = 1*16 + 0 = 16</text>
+    <text x="300" y="280" class="label">gid = 1*16 + 8 = 24</text>
+    <text x="300" y="295" class="label">gid = 1*16 + 9 = 25 (≥n)</text>
+  </g>
+  
+  <!-- Boundary condition -->
+  <rect x="50" y="330" width="900" height="40" class="formula-bg" rx="5"/>
+  <text x="60" y="348" class="code">if (gid >= window_size && gid < n)  // window_size=10, n=25</text>
+  <text x="60" y="362" class="label">Only threads with gid ∈ [10, 24] process data</text>
+  
+  <!-- Lee-Mykland Window Example -->
+  <text x="50" y="395" class="subtitle">Lee-Mykland Window Processing (gid=15)</text>
+  <rect x="40" y="405" width="920" height="120" class="formula-bg" rx="5"/>
+  
+  <!-- Data array visualization -->
+  <text x="60" y="425" class="label">Data Array (n=25):</text>
+  <g transform="translate(60, 435)">
+    <!-- Data points 0-24 -->
+    <!-- Points 0-6 (excluded) -->
+    <rect x="0" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="10" y="10" class="data-text">0</text>
+    <rect x="25" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="35" y="10" class="data-text">1</text>
+    <rect x="50" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="60" y="10" class="data-text">2</text>
+    <rect x="75" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="85" y="10" class="data-text">3</text>
+    <rect x="100" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="110" y="10" class="data-text">4</text>
+    <rect x="125" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="135" y="10" class="data-text">5</text>
+    <rect x="150" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="160" y="10" class="data-text">6</text>
+    
+    <!-- Points 7-14 (window data) -->
+    <rect x="175" y="0" width="20" height="20" class="data-window"/>
+    <text x="185" y="10" class="data-text">7</text>
+    <rect x="200" y="0" width="20" height="20" class="data-window"/>
+    <text x="210" y="10" class="data-text">8</text>
+    <rect x="225" y="0" width="20" height="20" class="data-window"/>
+    <text x="235" y="10" class="data-text">9</text>
+    <rect x="250" y="0" width="20" height="20" class="data-window"/>
+    <text x="260" y="10" class="data-text">10</text>
+    <rect x="275" y="0" width="20" height="20" class="data-window"/>
+    <text x="285" y="10" class="data-text">11</text>
+    <rect x="300" y="0" width="20" height="20" class="data-window"/>
+    <text x="310" y="10" class="data-text">12</text>
+    <rect x="325" y="0" width="20" height="20" class="data-window"/>
+    <text x="335" y="10" class="data-text">13</text>
+    <rect x="350" y="0" width="20" height="20" class="data-window"/>
+    <text x="360" y="10" class="data-text">14</text>
+    
+    <!-- Point 15 (current) -->
+    <rect x="375" y="0" width="20" height="20" class="data-current"/>
+    <text x="385" y="10" class="data-text">15</text>
+    
+    <!-- Points 16-24 (excluded) -->
+    <rect x="400" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="410" y="10" class="data-text">16</text>
+    <rect x="425" y="0" width="20" height="20" class="data-excluded"/>
+    <text x="435" y="10" class="data-text">17</text>
+    <!-- ... continuing pattern for remaining points -->
+  </g>
+  
+  <!-- Window calculation formula -->
+  <text x="60" y="470" class="code">for (j = gid - window_size + 2; j <= gid - 1; j++)</text>
+  <text x="60" y="485" class="code">for (j = 15 - 10 + 2; j <= 15 - 1; j++)</text>
+  <text x="60" y="500" class="code">for (j = 7; j <= 14; j++)  // Use data [7,8,9,10,11,12,13,14]</text>
+  <text x="60" y="515" class="label">Test statistic: L(15) = |returns[15]| / σ̂(15)</text>
+  
+  <!-- Arrows showing window -->
+  <line x1="235" y1="460" x2="360" y2="460" class="arrow"/>
+  <text x="290" y="475" class="label">Window Data</text>
+  
+  <line x1="385" y1="460" x2="385" y2="480" class="arrow"/>
+  <text x="390" y="490" class="label">Test Point</text>
+  
+  <!-- Legend -->
+  <text x="50" y="550" class="subtitle">Legend:</text>
+  <g transform="translate(50, 565)">
+    <rect x="0" y="0" width="20" height="20" class="thread-skip"/>
+    <text x="30" y="15" class="label">Skipped (gid < window_size)</text>
+    
+    <rect x="200" y="0" width="20" height="20" class="thread-active"/>
+    <text x="230" y="15" class="label">Active Processing</text>
+    
+    <rect x="400" y="0" width="20" height="20" class="thread-boundary"/>
+    <text x="430" y="15" class="label">Boundary (gid ≥ n)</text>
+    
+    <rect x="0" y="25" width="20" height="20" class="data-window"/>
+    <text x="30" y="40" class="label">Window Data</text>
+    
+    <rect x="200" y="25" width="20" height="20" class="data-current"/>
+    <text x="230" y="40" class="label">Current Test Point</text>
+    
+    <rect x="400" y="25" width="20" height="20" class="data-excluded"/>
+    <text x="430" y="40" class="label">Excluded Data</text>
+  </g>
+  
+  <!-- Key benefits -->
+  <text x="50" y="630" class="subtitle">Parallel Processing Benefits:</text>
+  <text x="60" y="650" class="label">• Each thread processes one data point independently</text>
+  <text x="60" y="665" class="label">• No synchronization needed within bipower window</text>
+  <text x="60" y="680" class="label">• Memory coalescing for adjacent threads</text>
+  <text x="60" y="695" class="label">• Boundary conditions prevent invalid memory access</text>
+  <text x="60" y="710" class="label">• Scales to thousands of parallel jump detections</text>
+  
+  <!-- Implementation note -->
+  <rect x="50" y="730" width="900" height="50" class="formula-bg" rx="5"/>
+  <text x="60" y="748" class="code">// Thread gid=15 calculates:</text>
+  <text x="60" y="762" class="code">bv_sum = Σ|returns[j]| * |returns[j-1]| for j∈[7,14]</text>
+  <text x="60" y="776" class="code">L(15) = |returns[15]| / sqrt((π/2) * bv_sum / 8)</text>
+</svg>

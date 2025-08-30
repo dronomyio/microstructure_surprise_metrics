@@ -1,0 +1,4 @@
+# Thread mapping
+ how CUDA maps threads to array indices and implements parallel Lee-Mykland jump detection - each thread calculates a unique global ID to process one data point, with boundary conditions ensuring only valid indices (where sufficient historical data exists for bipower variation calculation) are processed, while threads work in parallel across multiple GPU blocks to simultaneously detect jumps at different time points.RetrySM
+
+CUDA threads map to array indices through the formula gid = blockIdx.x * blockDim.x + threadIdx.x, showing how each thread processes one data point in parallel, with boundary conditions ensuring only valid indices (where sufficient historical data exists for bipower variation) are processed, while illustrating how thread 15 would use data points 7-14 for volatility estimation to test point 15 for jumps according to the Lee-Mykland methodology.
